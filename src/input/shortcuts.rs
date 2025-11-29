@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use evdev::{Device, InputEventKind, Key};
 use std::collections::HashSet;
+use std::io;
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 use std::sync::{
@@ -72,6 +73,8 @@ impl GlobalShortcuts {
         let mut last_trigger = Instant::now() - Duration::from_secs(10);
         let debounce_duration = Duration::from_millis(500);
         let mut combination_active = false;
+        let mut last_device_refresh = Instant::now();
+        let device_rescan_interval = Duration::from_secs(1);
 
         let listen_label = match self.kind {
             ShortcutKind::Hold => "hold",
@@ -87,7 +90,15 @@ impl GlobalShortcuts {
                 info!("Stopping shortcut listener: {}", self.shortcut_name);
                 break 'outer;
             }
-            // Check each device
+
+            let mut device_refresh_needed = false;
+
+            if self.devices.is_empty()
+                && last_device_refresh.elapsed() >= device_rescan_interval
+            {
+                device_refresh_needed = true;
+            }
+
             let target_keys = &self.target_keys;
             let shortcut_name = &self.shortcut_name;
 
@@ -190,6 +201,11 @@ impl GlobalShortcuts {
                     Err(e) => {
                         if e.kind() != std::io::ErrorKind::WouldBlock {
                             error!("Error fetching events: {}", e);
+
+                            if is_device_disconnect_error(&e) {
+                                warn!("Input device went away; scheduling keyboard rescan");
+                                device_refresh_needed = true;
+                            }
                         }
                         if stop.load(Ordering::Relaxed) {
                             break 'outer;
@@ -198,9 +214,38 @@ impl GlobalShortcuts {
                 }
             }
 
+            if device_refresh_needed
+                && last_device_refresh.elapsed() >= device_rescan_interval
+            {
+                last_device_refresh = Instant::now();
+                pressed_keys.clear();
+                combination_active = false;
+
+                if let Err(err) = self.refresh_devices() {
+                    error!("Failed to refresh keyboard devices: {}", err);
+                }
+            }
+
             // Small sleep to prevent busy-waiting
             std::thread::sleep(Duration::from_millis(10));
         }
+
+        Ok(())
+    }
+
+    fn refresh_devices(&mut self) -> Result<()> {
+        let devices = Self::find_keyboard_devices()?;
+
+        if devices.is_empty() {
+            warn!("No keyboard devices found after refresh; will retry periodically");
+        } else {
+            info!(
+                "Keyboard devices refreshed - monitoring {} device(s)",
+                devices.len()
+            );
+        }
+
+        self.devices = devices;
 
         Ok(())
     }
@@ -353,6 +398,13 @@ impl GlobalShortcuts {
     }
 }
 
+fn is_device_disconnect_error(err: &io::Error) -> bool {
+    match err.raw_os_error() {
+        Some(code) if code == libc::ENODEV || code == libc::EBADF || code == libc::ENXIO => true,
+        _ => false,
+    }
+}
+
 fn set_device_nonblocking(device: &Device) -> Result<()> {
     let fd = device.as_raw_fd();
 
@@ -377,4 +429,28 @@ fn set_device_nonblocking(device: &Device) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io;
+
+    #[test]
+    fn detects_enodev_as_disconnect() {
+        let err = io::Error::from_raw_os_error(libc::ENODEV);
+        assert!(is_device_disconnect_error(&err));
+    }
+
+    #[test]
+    fn does_not_treat_would_block_as_disconnect() {
+        let err = io::Error::from(io::ErrorKind::WouldBlock);
+        assert!(!is_device_disconnect_error(&err));
+    }
+
+    #[test]
+    fn does_not_treat_other_errors_as_disconnect() {
+        let err = io::Error::from(io::ErrorKind::BrokenPipe);
+        assert!(!is_device_disconnect_error(&err));
+    }
 }
