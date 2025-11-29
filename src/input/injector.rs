@@ -137,6 +137,11 @@ impl HyprlandDispatcher {
         self.send_shortcut(modifiers, "v", Some("active")).await
     }
 
+    async fn send_global_paste_shortcut(&self) -> Result<()> {
+        // Universal paste: Shift+Insert works in most applications including terminals
+        self.send_shortcut(&["shift"], "Insert", Some("active")).await
+    }
+
     async fn send_shortcut(
         &self,
         modifiers: &[&str],
@@ -844,6 +849,7 @@ pub struct TextInjector {
     word_overrides: HashMap<String, String>,
     extra_shift_classes: HashSet<String>,
     default_shift_paste: bool,
+    global_paste_shortcut: bool,
     hyprland_dispatcher: Option<HyprlandDispatcher>,
     wrtype_client: Option<WrtypeClient>,
     wrtype_attempted: bool,
@@ -854,6 +860,7 @@ pub struct TextInjector {
 impl TextInjector {
     pub fn new(
         shift_paste_default: bool,
+        global_paste_shortcut: bool,
         extra_shift_classes: Vec<String>,
         word_overrides: HashMap<String, String>,
         _auto_copy_clipboard: bool,
@@ -883,6 +890,7 @@ impl TextInjector {
                 .filter(|entry| !entry.is_empty())
                 .collect(),
             default_shift_paste: shift_paste_default,
+            global_paste_shortcut,
             hyprland_dispatcher,
             wrtype_client: None,
             wrtype_attempted: false,
@@ -908,6 +916,42 @@ impl TextInjector {
         // Small delay to ensure window focus is ready for input (especially on Wayland/XWayland)
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
 
+        let use_global_paste = self.global_paste_shortcut;
+
+        if use_global_paste {
+            // Universal paste mode: use Shift+Insert across all backends
+            if let Some(dispatcher) = self.hyprland_dispatcher.as_ref() {
+                debug!("Hyprland sendshortcut universal paste attempt (Shift+Insert)");
+                match dispatcher.send_global_paste_shortcut().await {
+                    Ok(_) => {
+                        info!("✅ Text injected via Hyprland universal paste (Shift+Insert)");
+                        return Ok(());
+                    }
+                    Err(err) => {
+                        warn!("Hyprland universal paste (Shift+Insert) failed: {err:?}");
+                    }
+                }
+            }
+
+            if let Some(client) = self.ensure_wrtype_client() {
+                debug!("Wayland virtual keyboard universal paste attempt (Shift+Insert)");
+                match send_virtual_keyboard_global_paste(client) {
+                    Ok(_) => {
+                        info!("✅ Text injected via Wayland virtual keyboard universal paste");
+                        return Ok(());
+                    }
+                    Err(err) => {
+                        warn!("Wayland virtual keyboard universal paste failed: {err:?}");
+                        self.invalidate_wrtype_client();
+                    }
+                }
+            }
+
+            debug!("Falling back to Shift+Insert paste via Enigo");
+            return self.inject_via_enigo_global_paste();
+        }
+
+        // Window-based paste mode: use Ctrl+V or Ctrl+Shift+V based on window class
         let mut shift_hint: Option<bool> = None;
         let default_shift = self.default_shift_paste;
 
@@ -1054,6 +1098,24 @@ impl TextInjector {
             .context("Failed to release Ctrl")?;
 
         info!("✅ Text injected via Enigo fallback paste");
+        Ok(())
+    }
+
+    fn inject_via_enigo_global_paste(&mut self) -> Result<()> {
+        use enigo::{Direction, Key};
+
+        // Universal paste: Shift+Insert works in most applications including terminals
+        self.enigo
+            .key(Key::Shift, Direction::Press)
+            .context("Failed to press Shift")?;
+        self.enigo
+            .key(Key::Insert, Direction::Click)
+            .context("Failed to press Insert")?;
+        self.enigo
+            .key(Key::Shift, Direction::Release)
+            .context("Failed to release Shift")?;
+
+        info!("✅ Text injected via Enigo universal paste (Shift+Insert)");
         Ok(())
     }
 
@@ -1246,6 +1308,11 @@ fn send_virtual_keyboard_paste(client: &mut WrtypeClient, use_shift: bool) -> Re
     } else {
         client.send_shortcut(&[Modifier::Ctrl], "v")
     }
+}
+
+fn send_virtual_keyboard_global_paste(client: &mut WrtypeClient) -> Result<()> {
+    // Universal paste: Shift+Insert works in most applications including terminals
+    client.send_shortcut(&[Modifier::Shift], "Insert")
 }
 
 fn shift_hint_for_class(class: &str, extra_shift_classes: &HashSet<String>) -> Option<bool> {
