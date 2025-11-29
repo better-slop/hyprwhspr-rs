@@ -218,6 +218,7 @@ impl HyprwhsprApp {
 
         let text_injector = TextInjector::new(
             config.shift_paste,
+            config.global_paste_shortcut,
             config.paste_hints.shift.clone(),
             config.word_overrides.clone(),
             config.auto_copy_clipboard,
@@ -375,6 +376,7 @@ impl HyprwhsprApp {
 
         let text_injector = TextInjector::new(
             new_config.shift_paste,
+            new_config.global_paste_shortcut,
             new_config.paste_hints.shift.clone(),
             new_config.word_overrides.clone(),
             new_config.auto_copy_clipboard,

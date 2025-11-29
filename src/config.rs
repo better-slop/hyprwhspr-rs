@@ -77,6 +77,9 @@ pub struct Config {
     pub shift_paste: bool,
 
     #[serde(default)]
+    pub global_paste_shortcut: bool,
+
+    #[serde(default)]
     pub paste_hints: PasteHintsConfig,
 
     #[serde(default)]
@@ -439,6 +442,7 @@ impl Default for Config {
             stop_sound_path: None,
             auto_copy_clipboard: default_auto_copy_clipboard(),
             shift_paste: default_shift_paste(),
+            global_paste_shortcut: false,
             paste_hints: PasteHintsConfig::default(),
             audio_device: None,
             fast_vad: FastVadConfig::default(),
