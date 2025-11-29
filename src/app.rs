@@ -190,7 +190,8 @@ impl HyprwhsprApp {
     pub fn new(config_manager: ConfigManager) -> Result<Self> {
         let config = config_manager.get();
 
-        let audio_capture = AudioCapture::new().context("Failed to initialize audio capture")?;
+        let audio_capture =
+            AudioCapture::new(config.audio_device).context("Failed to initialize audio capture")?;
 
         let assets_dir = config_manager.get_assets_dir();
         let audio_feedback = AudioFeedback::new(
@@ -384,6 +385,11 @@ impl HyprwhsprApp {
 
         let transcriber_changed =
             TranscriptionBackend::needs_refresh(&self.current_config, &new_config);
+
+        if self.current_config.audio_device != new_config.audio_device {
+            self.audio_capture
+                .update_preferred_device(new_config.audio_device);
+        }
 
         if transcriber_changed {
             let vad_options = build_vad_options(&self.config_manager, &new_config);

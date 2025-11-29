@@ -30,7 +30,8 @@ impl HyprwhsprAppTest {
     pub fn new(config_manager: ConfigManager) -> Result<Self> {
         let config = config_manager.get();
 
-        let audio_capture = AudioCapture::new().context("Failed to initialize audio capture")?;
+        let audio_capture =
+            AudioCapture::new(config.audio_device).context("Failed to initialize audio capture")?;
 
         let assets_dir = config_manager.get_assets_dir();
         let audio_feedback = AudioFeedback::new(
@@ -144,6 +145,11 @@ impl HyprwhsprAppTest {
 
         let fast_vad_was_allowed = fast_vad_allowed(&self.current_config);
         let fast_vad_is_allowed = fast_vad_allowed(&new_config);
+
+        if self.current_config.audio_device != new_config.audio_device {
+            self.audio_capture
+                .update_preferred_device(new_config.audio_device);
+        }
 
         if !fast_vad_is_allowed {
             let conflict_with_whisper = new_config.fast_vad.enabled

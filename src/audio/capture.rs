@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, InputCallbackInfo, SampleRate, StreamConfig};
 use std::sync::{Arc, Mutex};
@@ -7,6 +7,7 @@ use tracing::{debug, error, info, warn};
 
 pub struct AudioCapture {
     sample_rate: u32,
+    preferred_device: Option<usize>,
 }
 
 pub struct RecordingSession {
@@ -84,30 +85,49 @@ impl SampleRateTracker {
     }
 }
 
+enum DeviceSource {
+    Preferred(usize),
+    Default,
+    Fallback,
+}
+
+struct DeviceSelection {
+    device: cpal::Device,
+    name: String,
+    source: DeviceSource,
+}
+
 impl AudioCapture {
-    pub fn new() -> Result<Self> {
-        let host = cpal::default_host();
-        let device = host
-            .default_input_device()
-            .context("No input device available")?;
+    pub fn new(preferred_device: Option<usize>) -> Result<Self> {
+        let selection = Self::select_input_device(preferred_device)?;
+        let DeviceSelection { name, source, .. } = selection;
 
-        let device_name = device.name().unwrap_or_else(|_| "Unknown".to_string());
+        match source {
+            DeviceSource::Preferred(index) => {
+                info!("Using configured audio input device #{}: {}", index, name);
+            }
+            DeviceSource::Default => {
+                info!("Using audio input device: {}", name);
+            }
+            DeviceSource::Fallback => {
+                warn!(
+                    "No system default input device detected; using fallback device: {}",
+                    name
+                );
+            }
+        }
 
-        info!("Using audio input device: {}", device_name);
-
-        Ok(Self { sample_rate: 16000 })
+        Ok(Self {
+            sample_rate: 16000,
+            preferred_device,
+        })
     }
 
     pub fn sample_rate_hint(&self) -> u32 {
         self.sample_rate
     }
 
-    pub fn start_recording(&self) -> Result<RecordingSession> {
-        let host = cpal::default_host();
-        let device = host
-            .default_input_device()
-            .context("No input device available")?;
-
+    pub fn start_recording(&mut self) -> Result<RecordingSession> {
         // Configure for 16kHz mono (whisper.cpp prefers this)
         let config = StreamConfig {
             channels: 1,
@@ -117,47 +137,33 @@ impl AudioCapture {
 
         debug!("Starting audio capture at {}Hz mono", self.sample_rate);
 
-        // Shared buffer for audio data
-        let audio_data = Arc::new(Mutex::new(Vec::new()));
-        let audio_data_clone = Arc::clone(&audio_data);
-        let sample_rate_tracker = Arc::new(Mutex::new(SampleRateTracker::new(
-            config.sample_rate.0,
-            config.channels,
-        )));
-        let tracker_clone = Arc::clone(&sample_rate_tracker);
+        let selection = Self::select_input_device(self.preferred_device)?;
 
-        // Build input stream
-        let stream = device
-            .build_input_stream(
-                &config,
-                move |data: &[f32], info: &InputCallbackInfo| {
-                    if let Ok(mut tracker) = tracker_clone.lock() {
-                        tracker.update(data.len(), info);
+        match self.try_start_with_selection(selection, &config) {
+            Ok(session) => Ok(session),
+            Err((err, failed_name, failed_source)) => {
+                if !matches!(failed_source, DeviceSource::Fallback) {
+                    warn!(
+                        "Failed to start recording with device '{}': {:#}. Attempting fallback",
+                        failed_name, err
+                    );
+
+                    let fallback = Self::select_fallback_device(Some(&failed_name))
+                        .context("Failed to select fallback input device")?;
+                    match self.try_start_with_selection(fallback, &config) {
+                        Ok(session) => return Ok(session),
+                        Err((fallback_err, fallback_name, _)) => {
+                            return Err(fallback_err.context(format!(
+                                "Failed to start recording after falling back to '{}': {:#}",
+                                fallback_name, err
+                            )));
+                        }
                     }
-                    // Store audio samples
-                    if let Ok(mut buffer) = audio_data_clone.lock() {
-                        buffer.extend_from_slice(data);
-                    }
-                },
-                move |err| {
-                    error!("Audio stream error: {}", err);
-                },
-                None,
-            )
-            .context("Failed to build input stream")?;
+                }
 
-        // Start the stream
-        stream.play().context("Failed to start audio stream")?;
-
-        let device_name = device.name().unwrap_or_else(|_| "Unknown".to_string());
-        info!("✅ Audio recording started on {}", device_name);
-
-        Ok(RecordingSession {
-            stream,
-            audio_data,
-            sample_rate_tracker,
-            requested_sample_rate: config.sample_rate.0,
-        })
+                Err(err)
+            }
+        }
     }
 
     pub fn get_available_devices() -> Result<Vec<String>> {
@@ -171,6 +177,24 @@ impl AudioCapture {
         }
 
         Ok(devices)
+    }
+
+    pub fn update_preferred_device(&mut self, preferred: Option<usize>) {
+        if self.preferred_device == preferred {
+            return;
+        }
+
+        self.preferred_device = preferred;
+
+        match preferred {
+            Some(index) => info!(
+                "Audio input device preference set to index {} (will retry on next recording)",
+                index
+            ),
+            None => {
+                info!("Audio input device preference cleared; using system default where available")
+            }
+        }
     }
 }
 
@@ -236,6 +260,153 @@ impl RecordingSession {
 
 impl Default for AudioCapture {
     fn default() -> Self {
-        Self::new().expect("Failed to create AudioCapture")
+        Self::new(None).expect("Failed to create AudioCapture")
+    }
+}
+
+impl AudioCapture {
+    fn select_input_device(preferred_index: Option<usize>) -> Result<DeviceSelection> {
+        let host = cpal::default_host();
+
+        if let Some(index) = preferred_index {
+            let mut devices = host
+                .input_devices()
+                .context("Failed to enumerate input devices")?
+                .enumerate();
+
+            if let Some((idx, device)) = devices.find(|(i, _)| *i == index) {
+                let name = device.name().unwrap_or_else(|_| "Unknown".to_string());
+                return Ok(DeviceSelection {
+                    device,
+                    name,
+                    source: DeviceSource::Preferred(idx),
+                });
+            } else {
+                warn!(
+                    "Configured audio input device index {} not found; falling back to system default",
+                    index
+                );
+            }
+        }
+
+        if let Some(device) = host.default_input_device() {
+            let name = device.name().unwrap_or_else(|_| "Unknown".to_string());
+            return Ok(DeviceSelection {
+                device,
+                name,
+                source: DeviceSource::Default,
+            });
+        }
+
+        let mut devices = host
+            .input_devices()
+            .context("Failed to enumerate input devices")?;
+
+        if let Some(device) = devices.next() {
+            let name = device.name().unwrap_or_else(|_| "Unknown".to_string());
+            warn!(
+                "No system default input device available; using first detected device: {}",
+                name
+            );
+            return Ok(DeviceSelection {
+                device,
+                name,
+                source: DeviceSource::Fallback,
+            });
+        }
+
+        Err(anyhow!("No input device available"))
+    }
+
+    fn select_fallback_device(exclude_name: Option<&str>) -> Result<DeviceSelection> {
+        let host = cpal::default_host();
+        let mut devices = host
+            .input_devices()
+            .context("Failed to enumerate input devices")?;
+
+        while let Some(device) = devices.next() {
+            let name = device.name().unwrap_or_else(|_| "Unknown".to_string());
+            if exclude_name
+                .map(|exclude| exclude.eq_ignore_ascii_case(&name))
+                .unwrap_or(false)
+            {
+                continue;
+            }
+
+            return Ok(DeviceSelection {
+                device,
+                name,
+                source: DeviceSource::Fallback,
+            });
+        }
+
+        Err(anyhow!("No alternate input device available"))
+    }
+
+    fn try_start_with_selection(
+        &self,
+        selection: DeviceSelection,
+        config: &StreamConfig,
+    ) -> Result<RecordingSession, (anyhow::Error, String, DeviceSource)> {
+        let DeviceSelection {
+            device,
+            name,
+            source,
+        } = selection;
+
+        // Shared buffer for audio data
+        let audio_data = Arc::new(Mutex::new(Vec::new()));
+        let audio_data_clone = Arc::clone(&audio_data);
+        let sample_rate_tracker = Arc::new(Mutex::new(SampleRateTracker::new(
+            config.sample_rate.0,
+            config.channels,
+        )));
+        let tracker_clone = Arc::clone(&sample_rate_tracker);
+
+        let stream = match device.build_input_stream(
+            config,
+            move |data: &[f32], info: &InputCallbackInfo| {
+                if let Ok(mut tracker) = tracker_clone.lock() {
+                    tracker.update(data.len(), info);
+                }
+                if let Ok(mut buffer) = audio_data_clone.lock() {
+                    buffer.extend_from_slice(data);
+                }
+            },
+            move |err| {
+                error!("Audio stream error: {}", err);
+            },
+            None,
+        ) {
+            Ok(stream) => stream,
+            Err(e) => {
+                let err = anyhow!(e).context("Failed to build input stream");
+                return Err((err, name, source));
+            }
+        };
+
+        if let Err(e) = stream.play() {
+            let err = anyhow!(e).context("Failed to start audio stream");
+            return Err((err, name, source));
+        }
+
+        match &source {
+            DeviceSource::Preferred(index) => info!(
+                "✅ Audio recording started on configured device #{} ({})",
+                index, name
+            ),
+            DeviceSource::Default => info!("✅ Audio recording started on {}", name),
+            DeviceSource::Fallback => info!(
+                "✅ Audio recording started on fallback input device: {}",
+                name
+            ),
+        }
+
+        Ok(RecordingSession {
+            stream,
+            audio_data,
+            sample_rate_tracker,
+            requested_sample_rate: config.sample_rate.0,
+        })
     }
 }
