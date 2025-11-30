@@ -408,7 +408,8 @@ impl Default for GeminiConfig {
 }
 
 fn default_parakeet_model_dir() -> String {
-    "~/.local/share/hyprwhspr-rs/models/parakeet/parakeet-tdt-0.6b-v3-onnx".to_string()
+    // Relative path; resolved via ProjectDirs::data_dir() to respect XDG_DATA_HOME
+    "models/parakeet/parakeet-tdt-0.6b-v3-onnx".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

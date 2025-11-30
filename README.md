@@ -137,7 +137,7 @@
       "prompt": "Transcribe as technical documentation with proper capitalization, acronyms, and technical terminology. Do not add punctuation."
     },
     "parakeet": {
-      "model_dir": "~/.local/share/hyprwhspr-rs/models/parakeet/parakeet-tdt-0.6b-v3-onnx", // Directory containing ONNX models
+      "model_dir": "models/parakeet/parakeet-tdt-0.6b-v3-onnx", // Relative to $XDG_DATA_HOME/hyprwhspr-rs (or ~/.local/share/hyprwhspr-rs)
       "prompt": "Transcribe as technical documentation with proper capitalization, acronyms, and technical terminology. Do not add punctuation."
     }
   }
