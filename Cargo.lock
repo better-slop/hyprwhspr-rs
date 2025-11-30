@@ -1319,7 +1319,7 @@ dependencies = [
 
 [[package]]
 name = "hyprwhspr-rs"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "arboard",
