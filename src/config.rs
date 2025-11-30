@@ -319,6 +319,7 @@ pub enum TranscriptionProvider {
     WhisperCpp,
     Groq,
     Gemini,
+    Parakeet,
 }
 
 impl Default for TranscriptionProvider {
@@ -333,6 +334,7 @@ impl TranscriptionProvider {
             TranscriptionProvider::WhisperCpp => "Local",
             TranscriptionProvider::Groq => "Groq",
             TranscriptionProvider::Gemini => "Gemini",
+            TranscriptionProvider::Parakeet => "Parakeet TDT",
         }
     }
 }
@@ -405,6 +407,26 @@ impl Default for GeminiConfig {
     }
 }
 
+fn default_parakeet_model_dir() -> String {
+    "~/.local/share/hyprwhspr-rs/models/parakeet/parakeet-tdt-0.6b-v3-onnx".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct ParakeetConfig {
+    pub model_dir: String,
+    pub prompt: String,
+}
+
+impl Default for ParakeetConfig {
+    fn default() -> Self {
+        Self {
+            model_dir: default_parakeet_model_dir(),
+            prompt: default_whisper_prompt(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct TranscriptionConfig {
@@ -414,6 +436,7 @@ pub struct TranscriptionConfig {
     pub whisper_cpp: WhisperCppConfig,
     pub groq: GroqConfig,
     pub gemini: GeminiConfig,
+    pub parakeet: ParakeetConfig,
 }
 
 impl Default for TranscriptionConfig {
@@ -425,6 +448,7 @@ impl Default for TranscriptionConfig {
             whisper_cpp: WhisperCppConfig::default(),
             groq: GroqConfig::default(),
             gemini: GeminiConfig::default(),
+            parakeet: ParakeetConfig::default(),
         }
     }
 }
@@ -511,7 +535,8 @@ impl Config {
         if let Some(prompt) = self.legacy_whisper_prompt.take() {
             self.transcription.whisper_cpp.prompt = prompt.clone();
             self.transcription.groq.prompt = prompt.clone();
-            self.transcription.gemini.prompt = prompt;
+            self.transcription.gemini.prompt = prompt.clone();
+            self.transcription.parakeet.prompt = prompt;
         }
 
         if let Some(dirs) = self.legacy_models_dirs.take() {
