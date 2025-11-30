@@ -15,6 +15,8 @@
 - Groq or Gemini API key (optional)
   - Groq is cheap and fast as hell. Advanced/pretty formatting not included. [[Data Controls](https://console.groq.com/settings/data-controls)]
   - Slow, but much better output formatting.
+- Parakeet TDT (optional) - NVIDIA's local ASR model via ONNX
+  - Run `./scripts/download-parakeet-tdt.sh` to download model files (~1.2GB)
 
 ## Features
 
@@ -92,7 +94,7 @@
     "volatility_decrease_threshold": 0.12 // Relax profile when toggles stay below this ratio
   },
   "transcription": {
-    "provider": "whisper_cpp", // whisper_cpp | groq | gemini
+    "provider": "whisper_cpp", // whisper_cpp | groq | gemini | parakeet
     "request_timeout_secs": 45,
     "max_retries": 2,
     "whisper_cpp": {
@@ -132,6 +134,10 @@
       "endpoint": "https://generativelanguage.googleapis.com/v1beta/models",
       "temperature": 0.0,
       "max_output_tokens": 1024,
+      "prompt": "Transcribe as technical documentation with proper capitalization, acronyms, and technical terminology. Do not add punctuation."
+    },
+    "parakeet": {
+      "model_dir": "~/.local/share/hyprwhspr-rs/models/parakeet/parakeet-tdt-0.6b-v3-onnx", // Directory containing ONNX models
       "prompt": "Transcribe as technical documentation with proper capitalization, acronyms, and technical terminology. Do not add punctuation."
     }
   }
