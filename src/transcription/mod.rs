@@ -6,6 +6,7 @@ mod postprocess;
 mod prompt;
 
 use crate::config::{Config, ConfigManager, TranscriptionProvider};
+use crate::paths::expand_tilde;
 use crate::whisper::{WhisperManager, WhisperVadOptions};
 use anyhow::{Context, Result};
 use std::env;
@@ -97,29 +98,13 @@ impl TranscriptionBackend {
                 let prompt = Self::prompt_for(config, TranscriptionProvider::Parakeet);
                 let par_cfg = &config.transcription.parakeet;
 
-                let model_dir = {
-                    let raw = par_cfg.model_dir.trim();
-                    let expanded = if raw.starts_with("~/") {
-                        if let Ok(home) = env::var("HOME") {
-                            std::path::PathBuf::from(home).join(&raw[2..])
-                        } else {
-                            std::path::PathBuf::from(raw)
-                        }
-                    } else {
-                        std::path::PathBuf::from(raw)
-                    };
-
-                    if expanded.is_relative() {
-                        if let Some(project_dirs) =
-                            directories::ProjectDirs::from("", "", "hyprwhspr-rs")
-                        {
-                            project_dirs.data_dir().join(expanded)
-                        } else {
-                            expanded
-                        }
-                    } else {
-                        expanded
-                    }
+                let expanded = expand_tilde(&par_cfg.model_dir);
+                let model_dir = if expanded.is_relative() {
+                    directories::ProjectDirs::from("", "", "hyprwhspr-rs")
+                        .map(|dirs| dirs.data_dir().join(&expanded))
+                        .unwrap_or(expanded)
+                } else {
+                    expanded
                 };
 
                 let provider = ParakeetTranscriber::new(par_cfg, model_dir, prompt)?;

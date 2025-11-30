@@ -5,6 +5,7 @@ pub mod benchmark;
 pub mod config;
 pub mod input;
 pub mod logging;
+pub mod paths;
 pub mod status;
 pub mod transcription;
 pub mod whisper;

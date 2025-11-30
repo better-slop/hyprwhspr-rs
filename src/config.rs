@@ -1,3 +1,4 @@
+use crate::paths::expand_tilde;
 use crate::transcription::DEFAULT_PROMPT;
 use anyhow::{anyhow, Context, Result};
 use jsonc_parser::{parse_to_serde_value, ParseOptions};
@@ -862,16 +863,7 @@ impl ConfigManager {
 
         // Add custom models directories from config (with path expansion)
         for dir_str in &config.transcription.whisper_cpp.models_dirs {
-            let expanded = if dir_str.starts_with("~/") {
-                if let Ok(home) = env::var("HOME") {
-                    PathBuf::from(home).join(&dir_str[2..])
-                } else {
-                    PathBuf::from(dir_str)
-                }
-            } else {
-                PathBuf::from(dir_str)
-            };
-
+            let expanded = expand_tilde(dir_str);
             if expanded.exists() {
                 dirs.push(expanded);
             }
