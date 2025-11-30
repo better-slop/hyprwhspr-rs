@@ -1,10 +1,12 @@
 mod audio;
 mod gemini;
 mod groq;
+mod parakeet;
 mod postprocess;
 mod prompt;
 
 use crate::config::{Config, ConfigManager, TranscriptionProvider};
+use crate::paths::expand_tilde;
 use crate::whisper::{WhisperManager, WhisperVadOptions};
 use anyhow::{Context, Result};
 use std::env;
@@ -13,6 +15,7 @@ use std::time::Duration;
 pub use audio::{encode_to_flac, EncodedAudio};
 pub use gemini::GeminiTranscriber;
 pub use groq::GroqTranscriber;
+pub use parakeet::ParakeetTranscriber;
 pub use postprocess::{clean_transcription, contains_only_non_speech_markers, is_prompt_artifact};
 pub use prompt::{PromptBlueprint, DEFAULT_PROMPT};
 
@@ -20,6 +23,7 @@ pub enum TranscriptionBackend {
     Whisper(WhisperManager),
     Groq(GroqTranscriber),
     Gemini(GeminiTranscriber),
+    Parakeet(ParakeetTranscriber),
 }
 
 #[derive(Debug, Clone, Default)]
@@ -90,6 +94,22 @@ impl TranscriptionBackend {
                 )?;
                 Ok(Self::Gemini(provider))
             }
+            TranscriptionProvider::Parakeet => {
+                let prompt = Self::prompt_for(config, TranscriptionProvider::Parakeet);
+                let par_cfg = &config.transcription.parakeet;
+
+                let expanded = expand_tilde(&par_cfg.model_dir);
+                let model_dir = if expanded.is_relative() {
+                    directories::ProjectDirs::from("", "", "hyprwhspr-rs")
+                        .map(|dirs| dirs.data_dir().join(&expanded))
+                        .unwrap_or(expanded)
+                } else {
+                    expanded
+                };
+
+                let provider = ParakeetTranscriber::new(par_cfg, model_dir, prompt)?;
+                Ok(Self::Parakeet(provider))
+            }
         }
     }
 
@@ -98,6 +118,7 @@ impl TranscriptionBackend {
             TranscriptionBackend::Whisper(manager) => manager.initialize(),
             TranscriptionBackend::Groq(provider) => provider.initialize(),
             TranscriptionBackend::Gemini(provider) => provider.initialize(),
+            TranscriptionBackend::Parakeet(provider) => provider.initialize(),
         }
     }
 
@@ -106,6 +127,7 @@ impl TranscriptionBackend {
             TranscriptionBackend::Whisper(_) => TranscriptionProvider::WhisperCpp,
             TranscriptionBackend::Groq(_) => TranscriptionProvider::Groq,
             TranscriptionBackend::Gemini(_) => TranscriptionProvider::Gemini,
+            TranscriptionBackend::Parakeet(_) => TranscriptionProvider::Parakeet,
         }
     }
 
@@ -132,6 +154,11 @@ impl TranscriptionBackend {
                     || Self::prompt_for(current, TranscriptionProvider::Gemini)
                         != Self::prompt_for(new, TranscriptionProvider::Gemini)
             }
+            TranscriptionProvider::Parakeet => {
+                current.transcription.parakeet != new.transcription.parakeet
+                    || Self::prompt_for(current, TranscriptionProvider::Parakeet)
+                        != Self::prompt_for(new, TranscriptionProvider::Parakeet)
+            }
         }
     }
 
@@ -140,6 +167,7 @@ impl TranscriptionBackend {
             TranscriptionBackend::Whisper(manager) => manager.transcribe(audio_data).await,
             TranscriptionBackend::Groq(provider) => provider.transcribe(audio_data).await,
             TranscriptionBackend::Gemini(provider) => provider.transcribe(audio_data).await,
+            TranscriptionBackend::Parakeet(provider) => provider.transcribe(audio_data).await,
         }
     }
 }
@@ -155,6 +183,9 @@ impl TranscriptionBackend {
             }
             TranscriptionProvider::Gemini => {
                 PromptBlueprint::from(config.transcription.gemini.prompt.as_str()).resolve()
+            }
+            TranscriptionProvider::Parakeet => {
+                PromptBlueprint::from(config.transcription.parakeet.prompt.as_str()).resolve()
             }
         }
     }

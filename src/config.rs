@@ -1,3 +1,4 @@
+use crate::paths::expand_tilde;
 use crate::transcription::DEFAULT_PROMPT;
 use anyhow::{anyhow, Context, Result};
 use jsonc_parser::{parse_to_serde_value, ParseOptions};
@@ -319,6 +320,7 @@ pub enum TranscriptionProvider {
     WhisperCpp,
     Groq,
     Gemini,
+    Parakeet,
 }
 
 impl Default for TranscriptionProvider {
@@ -333,6 +335,7 @@ impl TranscriptionProvider {
             TranscriptionProvider::WhisperCpp => "Local",
             TranscriptionProvider::Groq => "Groq",
             TranscriptionProvider::Gemini => "Gemini",
+            TranscriptionProvider::Parakeet => "Parakeet TDT",
         }
     }
 }
@@ -405,6 +408,27 @@ impl Default for GeminiConfig {
     }
 }
 
+fn default_parakeet_model_dir() -> String {
+    // Relative path; resolved via ProjectDirs::data_dir() to respect XDG_DATA_HOME
+    "models/parakeet/parakeet-tdt-0.6b-v3-onnx".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct ParakeetConfig {
+    pub model_dir: String,
+    pub prompt: String,
+}
+
+impl Default for ParakeetConfig {
+    fn default() -> Self {
+        Self {
+            model_dir: default_parakeet_model_dir(),
+            prompt: default_whisper_prompt(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct TranscriptionConfig {
@@ -414,6 +438,7 @@ pub struct TranscriptionConfig {
     pub whisper_cpp: WhisperCppConfig,
     pub groq: GroqConfig,
     pub gemini: GeminiConfig,
+    pub parakeet: ParakeetConfig,
 }
 
 impl Default for TranscriptionConfig {
@@ -425,6 +450,7 @@ impl Default for TranscriptionConfig {
             whisper_cpp: WhisperCppConfig::default(),
             groq: GroqConfig::default(),
             gemini: GeminiConfig::default(),
+            parakeet: ParakeetConfig::default(),
         }
     }
 }
@@ -511,7 +537,8 @@ impl Config {
         if let Some(prompt) = self.legacy_whisper_prompt.take() {
             self.transcription.whisper_cpp.prompt = prompt.clone();
             self.transcription.groq.prompt = prompt.clone();
-            self.transcription.gemini.prompt = prompt;
+            self.transcription.gemini.prompt = prompt.clone();
+            self.transcription.parakeet.prompt = prompt;
         }
 
         if let Some(dirs) = self.legacy_models_dirs.take() {
@@ -836,16 +863,7 @@ impl ConfigManager {
 
         // Add custom models directories from config (with path expansion)
         for dir_str in &config.transcription.whisper_cpp.models_dirs {
-            let expanded = if dir_str.starts_with("~/") {
-                if let Ok(home) = env::var("HOME") {
-                    PathBuf::from(home).join(&dir_str[2..])
-                } else {
-                    PathBuf::from(dir_str)
-                }
-            } else {
-                PathBuf::from(dir_str)
-            };
-
+            let expanded = expand_tilde(dir_str);
             if expanded.exists() {
                 dirs.push(expanded);
             }
