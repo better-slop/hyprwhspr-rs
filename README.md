@@ -7,7 +7,9 @@
 
 > ⚠️ **Experimental:** This application is largely written with AI.
 
-![hyprwhspr-rs demo](assets/hyprwhspr-rs-demo.gif)
+
+https://github.com/user-attachments/assets/bbbaa1c3-1a7e-4165-ad3d-27b7465e201a
+
 
 ## Requirements
 
