@@ -2,14 +2,15 @@
   <img src="assets/logo.png" alt="hyprwhspr-rs logo" width="200" />
   <h3>hyprwhspr-rs</h3>
   <p>Rust implementation of <a href="https://github.com/goodroot/hyprwhspr">hyprwhspr</a> | Native speech-to-text voice dictation for Hyprland.</p>
+  <br />
+  <pre><code>cargo install hyprwhspr-rs</code></pre>
+  <br />
 </div>
 <hr />
 
 > ⚠️ **Experimental:** This application is largely written with AI.
 
-
 https://github.com/user-attachments/assets/bbbaa1c3-1a7e-4165-ad3d-27b7465e201a
-
 
 ## Requirements
 
@@ -35,14 +36,29 @@ https://github.com/user-attachments/assets/bbbaa1c3-1a7e-4165-ad3d-27b7465e201a
 - Execs `dispatch sendshortcut` commands against the active window to paste dictated text, inspecting `activewindow` to decide when `Shift` is required for a hardcoded list of programs.
 - Falls back to a Wayland virtual keyboard client or a simulated keypress paste if IPC communication fails.
 
+## Installation
+
+### From crates.io
+
+```bash
+cargo install hyprwhspr-rs
+```
+
+### From source
+
+1. `git clone https://github.com/better-slop/hyprwhispr-rs.git`
+2. `cd hyprwhspr-rs`
+3. `cargo build --release`
+4. `sudo cp target/release/hyprwhspr-rs /usr/local/bin/`
+
 ## Development
 
 1. `git clone https://github.com/better-slop/hyprwhispr-rs.git`
 2. `cd hyprwhspr-rs`
 3. `cargo build --release`
 4. Run using:
-    - pretty logs: `RUST_LOG=debug ./target/release/hyprwhspr-rs`
-    - production release: `./target/release/hyprwhspr-rs`
+   - pretty logs: `RUST_LOG=debug ./target/release/hyprwhspr-rs`
+   - production release: `./target/release/hyprwhspr-rs`
 
 <details>
   <summary>
@@ -81,7 +97,7 @@ https://github.com/user-attachments/assets/bbbaa1c3-1a7e-4165-ad3d-27b7465e201a
   "paste_hints": {
     "shift": [
       // Optional list of Hyprland window classes that should always paste with Ctrl+Shift+V
-    ]
+    ],
   },
   "audio_device": null, // Force a specific input device index (null uses system default)
   "fast_vad": {
@@ -93,7 +109,7 @@ https://github.com/user-attachments/assets/bbbaa1c3-1a7e-4165-ad3d-27b7465e201a
     "post_roll_ms": 150, // Audio to keep after speech before trimming
     "volatility_window": 24, // Frames observed for adaptive aggressiveness (30 ms per frame, matches FRAME_MS in src/audio/vad.rs)
     "volatility_increase_threshold": 0.35, // Bump profile when toggles exceed this ratio
-    "volatility_decrease_threshold": 0.12 // Relax profile when toggles stay below this ratio
+    "volatility_decrease_threshold": 0.12, // Relax profile when toggles stay below this ratio
   },
   "transcription": {
     "provider": "whisper_cpp", // whisper_cpp | groq | gemini | parakeet
@@ -106,9 +122,7 @@ https://github.com/user-attachments/assets/bbbaa1c3-1a7e-4165-ad3d-27b7465e201a
       "gpu_layers": 999, // Number of layers to keep on GPU (999 = auto/GPU preferred)
       "fallback_cli": false, // Fallback to whisper-cli (uses CPU)
       "no_speech_threshold": 0.6, // Whisper's "no speech" confidence gate
-      "models_dirs": [
-        "~/.config/hyprwhspr-rs/models"
-      ], // Directories to search for models
+      "models_dirs": ["~/.config/hyprwhspr-rs/models"], // Directories to search for models
       "vad": {
         "enabled": false, // Toggle whisper-cli's native Silero VAD
         "model": "ggml-silero-v5.1.2.bin", // Path or filename for the ggml Silero VAD model
@@ -123,26 +137,26 @@ https://github.com/user-attachments/assets/bbbaa1c3-1a7e-4165-ad3d-27b7465e201a
         // Extra padding (ms) added before/after detected speech so words aren't clipped.
         "speech_pad_ms": 80,
         // Overlap ratio between segments. Higher overlap helps smooth transitions at the cost of a little extra decode time.
-        "samples_overlap": 0.1
-      }
+        "samples_overlap": 0.1,
+      },
     },
     "groq": {
       "model": "whisper-large-v3-turbo",
       "endpoint": "https://api.groq.com/openai/v1/audio/transcriptions",
-      "prompt": "Transcribe as technical documentation with proper capitalization, acronyms, and technical terminology. Do not add punctuation."
+      "prompt": "Transcribe as technical documentation with proper capitalization, acronyms, and technical terminology. Do not add punctuation.",
     },
     "gemini": {
       "model": "gemini-2.5-flash-preview-09-2025",
       "endpoint": "https://generativelanguage.googleapis.com/v1beta/models",
       "temperature": 0.0,
       "max_output_tokens": 1024,
-      "prompt": "Transcribe as technical documentation with proper capitalization, acronyms, and technical terminology. Do not add punctuation."
+      "prompt": "Transcribe as technical documentation with proper capitalization, acronyms, and technical terminology. Do not add punctuation.",
     },
     "parakeet": {
       "model_dir": "models/parakeet/parakeet-tdt-0.6b-v3-onnx", // Relative to $XDG_DATA_HOME/hyprwhspr-rs (or ~/.local/share/hyprwhspr-rs)
-      "prompt": "Transcribe as technical documentation with proper capitalization, acronyms, and technical terminology. Do not add punctuation."
-    }
-  }
+      "prompt": "Transcribe as technical documentation with proper capitalization, acronyms, and technical terminology. Do not add punctuation.",
+    },
+  },
 }
 ```
 
