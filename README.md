@@ -4,7 +4,6 @@
   <p>Rust implementation of <a href="https://github.com/goodroot/hyprwhspr">hyprwhspr</a> | Native speech-to-text voice dictation for Hyprland.</p>
   <br />
   <pre><code>cargo install hyprwhspr-rs</code></pre>
-  <br />
 </div>
 <hr />
 
