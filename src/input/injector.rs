@@ -908,6 +908,11 @@ impl TextInjector {
         // Preprocess text
         let processed = self.preprocess_text(text);
 
+        if processed.is_empty() {
+            debug!("Text became empty after preprocessing, nothing to inject");
+            return Ok(());
+        }
+
         info!("Injecting text: {} characters", processed.len());
 
         // Copy to clipboard using available backends
@@ -1014,6 +1019,10 @@ impl TextInjector {
     }
 
     fn copy_processed_text(&mut self, text: &str) -> Result<()> {
+        if text.is_empty() {
+            return Ok(());
+        }
+
         if self.wayland_clipboard_enabled {
             match self.copy_wayland_clipboard(text) {
                 Ok(_) => {
