@@ -14,7 +14,7 @@ use crate::audio::{
 use crate::benchmark::BenchmarkRecorder;
 use crate::config::{Config, ConfigManager, ShortcutsConfig, TranscriptionProvider};
 use crate::input::{GlobalShortcuts, ShortcutEvent, ShortcutKind, ShortcutPhase, TextInjector};
-use crate::status::StatusWriter;
+use crate::status::{StatusWriter, WaybarState};
 use crate::transcription::{TranscriptionBackend, TranscriptionResult};
 use crate::whisper::WhisperVadOptions;
 
@@ -226,7 +226,7 @@ impl HyprwhsprApp {
         )?;
 
         let status_writer = StatusWriter::new()?;
-        status_writer.set_recording(false)?;
+        status_writer.set_state(WaybarState::Inactive, "Ready")?;
 
         let (shortcut_tx, shortcut_rx) = mpsc::channel(10);
 
@@ -555,7 +555,7 @@ impl HyprwhsprApp {
 
         self.audio_feedback.play_stop_sound()?;
 
-        self.status_writer.set_recording(false)?;
+        self.status_writer.set_processing()?;
 
         let captured_audio = session.stop().context("Failed to stop recording")?;
         let stop_timestamp = Instant::now();
@@ -570,14 +570,23 @@ impl HyprwhsprApp {
             self.is_processing = true;
             if let Err(e) = self.process_audio(captured_audio).await {
                 error!("❌ Error processing audio: {:#}", e);
-                // Show user-friendly error notification
+                self.status_writer
+                    .set_error(&format!("{:#}", e))
+                    .unwrap_or_else(|e| tracing::warn!("Failed to set error status: {}", e));
                 warn!("Failed to process recording. Check logs for details.");
             }
             self.benchmark = None;
             self.is_processing = false;
+            // Return to inactive state after processing
+            self.status_writer
+                .set_state(WaybarState::Inactive, "Ready")
+                .unwrap_or_else(|e| tracing::warn!("Failed to set inactive status: {}", e));
         } else {
             warn!("No audio data captured");
             self.benchmark = None;
+            self.status_writer
+                .set_state(WaybarState::Inactive, "Ready")
+                .unwrap_or_else(|e| tracing::warn!("Failed to set inactive status: {}", e));
         }
 
         Ok(())
@@ -738,6 +747,11 @@ impl HyprwhsprApp {
 
         info!("📝 Transcription: \"{}\"", text);
 
+        // Save to history for Walker/Elephant integration
+        if let Err(e) = self.status_writer.save_transcription(&text) {
+            tracing::warn!("Failed to save transcription to history: {}", e);
+        }
+
         let text_injector = Arc::clone(&self.text_injector);
         let mut injector = text_injector.lock().await;
 
@@ -767,9 +781,9 @@ impl HyprwhsprApp {
         info!("🧹 Cleaning up...");
 
         if self.recording_session.is_some() {
-            self.status_writer.set_recording(false)?;
             self.recording_session = None;
         }
+        self.status_writer.cleanup()?;
 
         if let Some(listener) = &mut self.press_listener {
             listener.stop();
