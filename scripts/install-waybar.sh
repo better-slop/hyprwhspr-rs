@@ -2,13 +2,14 @@
 # Install hyprwhspr-rs Waybar integration
 #
 # This script:
-# 1. Creates XDG directories for status/history
-# 2. Sets up environment file for API keys
-# 3. Installs and starts systemd user service
-# 4. Adds Waybar module to config (first position in modules-right)
-# 5. Adds CSS styles
-# 6. Reloads Waybar
-# 7. Optionally installs Elephant menu for Walker integration
+# 1. Backs up ALL existing config files before modification
+# 2. Creates XDG directories for status/history
+# 3. Sets up environment file for API keys
+# 4. Installs and starts systemd user service
+# 5. Adds Waybar module to config (first position in modules-right)
+# 6. Adds CSS styles
+# 7. Reloads Waybar
+# 8. Optionally installs Elephant menu for Walker integration
 #
 # Usage: ./install-waybar.sh [--with-elephant]
 
@@ -25,8 +26,16 @@ success() { echo -e "${GREEN}[OK]${NC} $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(dirname "$SCRIPT_DIR")"
+# Determine script location - handle both direct execution and via hyprwhspr-rs install
+if [[ -n "${HYPRWHSPR_INSTALL_DIR:-}" ]]; then
+    REPO_DIR="$HYPRWHSPR_INSTALL_DIR"
+elif [[ -f "${BASH_SOURCE[0]}" ]]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    REPO_DIR="$(dirname "$SCRIPT_DIR")"
+else
+    # Fallback: assume we're in the repo
+    REPO_DIR="$(pwd)"
+fi
 
 XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
 XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
@@ -37,10 +46,61 @@ WAYBAR_CONFIG_DIR="$XDG_CONFIG_HOME/waybar"
 SYSTEMD_USER_DIR="$XDG_CONFIG_HOME/systemd/user"
 ELEPHANT_MENU_DIR="$XDG_CONFIG_HOME/elephant/menus"
 
+BACKUP_DATE="$(date +%Y%m%d_%H%M%S)"
+BACKUPS_MADE=()
+
 WITH_ELEPHANT=false
-if [[ "${1:-}" == "--with-elephant" ]]; then
-    WITH_ELEPHANT=true
-fi
+for arg in "$@"; do
+    case "$arg" in
+        --with-elephant) WITH_ELEPHANT=true ;;
+    esac
+done
+
+backup_file() {
+    local file="$1"
+    if [[ -f "$file" ]]; then
+        local backup="${file}.backup-${BACKUP_DATE}"
+        cp "$file" "$backup"
+        BACKUPS_MADE+=("$backup")
+        info "Backup: $backup"
+        return 0
+    fi
+    return 1
+}
+
+backup_all_existing_configs() {
+    info "Backing up existing configuration files..."
+    
+    local backed_up=0
+    
+    # Waybar configs
+    for f in "$WAYBAR_CONFIG_DIR/config.jsonc" "$WAYBAR_CONFIG_DIR/config.json" "$WAYBAR_CONFIG_DIR/config" "$WAYBAR_CONFIG_DIR/style.css"; do
+        if backup_file "$f"; then
+            ((backed_up++)) || true
+        fi
+    done
+    
+    # Systemd service
+    if backup_file "$SYSTEMD_USER_DIR/hyprwhspr-rs.service"; then
+        ((backed_up++)) || true
+    fi
+    
+    # Existing hyprwhspr env file
+    if backup_file "$HYPRWHSPR_CONFIG_DIR/env"; then
+        ((backed_up++)) || true
+    fi
+    
+    # Elephant menu if exists
+    if backup_file "$ELEPHANT_MENU_DIR/hyprwhspr.lua"; then
+        ((backed_up++)) || true
+    fi
+    
+    if [[ $backed_up -gt 0 ]]; then
+        success "Backed up $backed_up file(s)"
+    else
+        info "No existing files to back up"
+    fi
+}
 
 create_directories() {
     info "Creating directories..."
@@ -59,7 +119,8 @@ setup_env_file() {
     
     local env_file="$HYPRWHSPR_CONFIG_DIR/env"
     
-    if [[ -f "$env_file" ]]; then
+    # If env file exists and has content, don't overwrite
+    if [[ -f "$env_file" && -s "$env_file" ]]; then
         success "Environment file already exists: $env_file"
         return 0
     fi
@@ -76,10 +137,8 @@ setup_env_file() {
     local found_key=""
     for rc_file in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.profile" "$HOME/.zshenv"; do
         if [[ -f "$rc_file" ]]; then
-            # Look for export GROQ_API_KEY=... pattern
             local key_line=$(grep -E "^export\s+GROQ_API_KEY=" "$rc_file" 2>/dev/null | tail -1 || true)
             if [[ -n "$key_line" ]]; then
-                # Extract the value
                 found_key=$(echo "$key_line" | sed -E 's/^export\s+GROQ_API_KEY=["'"'"']?([^"'"'"']*)["'"'"']?.*$/\1/')
                 if [[ -n "$found_key" ]]; then
                     info "Found GROQ_API_KEY in $rc_file"
@@ -106,7 +165,6 @@ setup_env_file() {
         chmod 600 "$env_file"
         success "Created env file with provided key"
     else
-        # Create empty env file so service doesn't complain
         touch "$env_file"
         chmod 600 "$env_file"
         warn "Created empty env file - add your API key later to: $env_file"
@@ -143,7 +201,6 @@ start_service() {
         success "Service started"
     fi
     
-    # Give it a moment to start
     sleep 1
     
     if systemctl --user is-active --quiet hyprwhspr-rs.service; then
@@ -153,19 +210,9 @@ start_service() {
     fi
 }
 
-backup_file() {
-    local file="$1"
-    if [[ -f "$file" ]]; then
-        local backup="${file}.backup.$(date +%Y%m%d_%H%M%S)"
-        cp "$file" "$backup"
-        info "Backup: $backup"
-    fi
-}
-
 install_waybar_module() {
     info "Configuring Waybar module..."
     
-    # Find existing config (try jsonc first, then json, then plain)
     local config_file=""
     for f in "$WAYBAR_CONFIG_DIR/config.jsonc" "$WAYBAR_CONFIG_DIR/config.json" "$WAYBAR_CONFIG_DIR/config"; do
         if [[ -f "$f" ]]; then
@@ -178,7 +225,7 @@ install_waybar_module() {
         warn "No Waybar config found in $WAYBAR_CONFIG_DIR"
         warn "Creating new config.jsonc"
         config_file="$WAYBAR_CONFIG_DIR/config.jsonc"
-        echo '{}' > "$config_file"
+        echo '{"modules-right": []}' > "$config_file"
     fi
     
     # Check if already configured
@@ -187,9 +234,6 @@ install_waybar_module() {
         return 0
     fi
     
-    backup_file "$config_file"
-    
-    # Use Python/jq to properly modify JSON (try python3 first, fall back to basic sed)
     if command -v python3 &>/dev/null; then
         python3 << PYEOF
 import json
@@ -198,13 +242,10 @@ import sys
 
 config_file = "$config_file"
 
-# Read file, strip comments for JSON parsing
 with open(config_file, 'r') as f:
     content = f.read()
 
-# Remove // comments (but not :// in URLs)
 content_no_comments = re.sub(r'(?<!:)//.*$', '', content, flags=re.MULTILINE)
-# Remove /* */ comments
 content_no_comments = re.sub(r'/\*.*?\*/', '', content_no_comments, flags=re.DOTALL)
 
 try:
@@ -213,7 +254,6 @@ except json.JSONDecodeError as e:
     print(f"Warning: Could not parse Waybar config as JSON: {e}", file=sys.stderr)
     sys.exit(1)
 
-# Add custom/hyprwhspr module definition
 config["custom/hyprwhspr"] = {
     "exec": "cat ~/.cache/hyprwhspr/status.json 2>/dev/null || echo '{\"text\":\"\",\"class\":\"inactive\",\"tooltip\":\"Not running\"}'",
     "return-type": "json",
@@ -222,19 +262,15 @@ config["custom/hyprwhspr"] = {
     "on-click": "walker --provider menus:hyprwhspr"
 }
 
-# Add to modules-right (first position) if it exists
 if "modules-right" in config and isinstance(config["modules-right"], list):
     if "custom/hyprwhspr" not in config["modules-right"]:
         config["modules-right"].insert(0, "custom/hyprwhspr")
 elif "modules-left" in config and isinstance(config["modules-left"], list):
-    # Fall back to modules-left if no modules-right
     if "custom/hyprwhspr" not in config["modules-left"]:
         config["modules-left"].insert(0, "custom/hyprwhspr")
 else:
-    # Create modules-right if neither exists
     config["modules-right"] = ["custom/hyprwhspr"]
 
-# Write back with nice formatting
 with open(config_file, 'w') as f:
     json.dump(config, f, indent=2)
 
@@ -242,7 +278,6 @@ print("Module added successfully")
 PYEOF
         success "Added custom/hyprwhspr module to Waybar config"
     else
-        # Fallback: just warn user to add manually
         warn "python3 not found - please add the module manually"
         echo ""
         echo "Add this to your Waybar config ($config_file):"
@@ -262,13 +297,10 @@ install_waybar_css() {
         touch "$waybar_style"
     fi
     
-    # Check if already has hyprwhspr styles
     if grep -q "#custom-hyprwhspr" "$waybar_style" 2>/dev/null; then
         success "Waybar CSS already contains hyprwhspr styles"
         return 0
     fi
-    
-    backup_file "$waybar_style"
     
     echo "" >> "$waybar_style"
     cat "$REPO_DIR/config/waybar/hyprwhspr-style.css" >> "$waybar_style"
@@ -280,10 +312,8 @@ reload_waybar() {
     info "Reloading Waybar..."
     
     if pgrep -x waybar &>/dev/null; then
-        # Send SIGUSR2 to reload config
         pkill -SIGUSR2 waybar || true
         sleep 0.5
-        # Also signal for custom module refresh
         pkill -RTMIN+8 waybar || true
         success "Waybar reloaded"
     else
@@ -324,6 +354,15 @@ print_summary() {
     success "Installation complete!"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
+    
+    if [[ ${#BACKUPS_MADE[@]} -gt 0 ]]; then
+        echo "Backups created:"
+        for backup in "${BACKUPS_MADE[@]}"; do
+            echo "  $backup"
+        done
+        echo ""
+    fi
+    
     echo "The hyprwhspr module should now appear in your Waybar."
     echo ""
     echo "Files:"
@@ -350,6 +389,7 @@ main() {
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
     
+    backup_all_existing_configs
     create_directories
     setup_env_file
     install_systemd_service
