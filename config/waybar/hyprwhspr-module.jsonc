@@ -1,9 +1,16 @@
 {
   "custom/hyprwhspr": {
-    "exec": "cat ~/.cache/hyprwhspr/status.json 2>/dev/null || echo '{\"text\":\"\",\"class\":\"inactive\",\"tooltip\":\"Not running\"}'",
+    "exec": "$HOME/.config/waybar/hyprwhspr-status.sh",
     "return-type": "json",
-    "interval": 0,
-    "signal": 8,
+    "format": "{icon}",
+    "format-icons": {
+      "inactive": "󰍭",
+      "active": "󰍬",
+      "processing": "󰍬",
+      "error": "󰍭"
+    },
+    "tooltip": true,
+    "restart-interval": 5,
     "on-click": "walker --provider menus:hyprwhspr"
   }
 }
