@@ -262,11 +262,11 @@ except json.JSONDecodeError as e:
 
 # Always add/update the module definition
 config["custom/hyprwhspr"] = {
-    "exec": "~/.config/waybar/hyprwhspr-status.sh",
+    "exec": "cat ~/.cache/hyprwhspr/status.json 2>/dev/null || echo '{\"text\":\"󰍭\",\"class\":\"inactive\",\"tooltip\":\"Not running\"}'",
     "return-type": "json",
-    "format": "{}",
+    "format": "{text}",
+    "interval": 1,
     "tooltip": True,
-    "restart-interval": 5,
     "on-click": "walker --provider menus:hyprwhspr"
 }
 
@@ -294,30 +294,6 @@ PYEOF
         echo ""
         echo "And add \"custom/hyprwhspr\" to modules-right"
     fi
-}
-
-install_waybar_status_script() {
-    info "Installing Waybar status script..."
-    
-    local src="$REPO_DIR/config/waybar/hyprwhspr-status.sh"
-    local dst="$WAYBAR_CONFIG_DIR/hyprwhspr-status.sh"
-    
-    if [[ ! -f "$src" ]]; then
-        error "Status script not found: $src"
-        return 1
-    fi
-    
-    cp "$src" "$dst"
-    chmod +x "$dst"
-    
-    # Check for inotifywait dependency
-    if ! command -v inotifywait &>/dev/null; then
-        warn "inotifywait not found - install inotify-tools package"
-        warn "  Arch: pacman -S inotify-tools"
-        warn "  Debian/Ubuntu: apt install inotify-tools"
-    fi
-    
-    success "Waybar status script installed: $dst"
 }
 
 install_waybar_css() {
@@ -425,7 +401,6 @@ main() {
     create_directories
     setup_env_file
     install_systemd_service
-    install_waybar_status_script
     install_waybar_module
     install_waybar_css
     install_elephant_menu
