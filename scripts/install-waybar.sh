@@ -228,9 +228,10 @@ install_waybar_module() {
         echo '{"modules-right": []}' > "$config_file"
     fi
     
-    # Check if already configured
-    if grep -q '"custom/hyprwhspr"' "$config_file" 2>/dev/null; then
-        success "Waybar module already configured"
+    # Check if module DEFINITION exists (not just reference in modules array)
+    # Look for "custom/hyprwhspr": { pattern which indicates the definition block
+    if grep -qE '"custom/hyprwhspr"\s*:\s*\{' "$config_file" 2>/dev/null; then
+        success "Waybar module definition already exists"
         return 0
     fi
     
@@ -254,6 +255,7 @@ except json.JSONDecodeError as e:
     print(f"Warning: Could not parse Waybar config as JSON: {e}", file=sys.stderr)
     sys.exit(1)
 
+# Always add/update the module definition
 config["custom/hyprwhspr"] = {
     "exec": "cat ~/.cache/hyprwhspr/status.json 2>/dev/null || echo '{\"text\":\"\",\"class\":\"inactive\",\"tooltip\":\"Not running\"}'",
     "return-type": "json",
@@ -262,6 +264,7 @@ config["custom/hyprwhspr"] = {
     "on-click": "walker --provider menus:hyprwhspr"
 }
 
+# Add to modules-right (first position) if not already there
 if "modules-right" in config and isinstance(config["modules-right"], list):
     if "custom/hyprwhspr" not in config["modules-right"]:
         config["modules-right"].insert(0, "custom/hyprwhspr")
@@ -274,9 +277,9 @@ else:
 with open(config_file, 'w') as f:
     json.dump(config, f, indent=2)
 
-print("Module added successfully")
+print("Module definition added successfully")
 PYEOF
-        success "Added custom/hyprwhspr module to Waybar config"
+        success "Added custom/hyprwhspr module definition to Waybar config"
     else
         warn "python3 not found - please add the module manually"
         echo ""
