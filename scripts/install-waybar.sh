@@ -41,7 +41,7 @@ XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
 XDG_DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 
-HYPRWHSPR_CONFIG_DIR="$XDG_CONFIG_HOME/hyprwhspr"
+HYPRWHSPR_CONFIG_DIR="$XDG_CONFIG_HOME/hyprwhspr-rs"
 WAYBAR_CONFIG_DIR="$XDG_CONFIG_HOME/waybar"
 SYSTEMD_USER_DIR="$XDG_CONFIG_HOME/systemd/user"
 ELEPHANT_MENU_DIR="$XDG_CONFIG_HOME/elephant/menus"
@@ -105,8 +105,8 @@ backup_all_existing_configs() {
 create_directories() {
     info "Creating directories..."
     
-    mkdir -p "$XDG_CACHE_HOME/hyprwhspr"
-    mkdir -p "$XDG_DATA_HOME/hyprwhspr"
+    mkdir -p "$XDG_CACHE_HOME/hyprwhspr-rs"
+    mkdir -p "$XDG_DATA_HOME/hyprwhspr-rs"
     mkdir -p "$HYPRWHSPR_CONFIG_DIR"
     mkdir -p "$SYSTEMD_USER_DIR"
     mkdir -p "$WAYBAR_CONFIG_DIR"
@@ -262,7 +262,7 @@ except json.JSONDecodeError as e:
 
 # Always add/update the module definition
 config["custom/hyprwhspr"] = {
-    "exec": "cat ~/.cache/hyprwhspr/status.json 2>/dev/null || echo '{\"text\":\"󰍭\",\"class\":\"inactive\",\"tooltip\":\"Not running\"}'",
+    "exec": "cat ~/.cache/hyprwhspr-rs/status.json 2>/dev/null || echo '{\"text\":\"󰍭\",\"class\":\"inactive\",\"tooltip\":\"Not running\"}'",
     "return-type": "json",
     "format": "{text}",
     "interval": 1,
@@ -376,8 +376,8 @@ print_summary() {
     echo "Files:"
     echo "  Config:  $HYPRWHSPR_CONFIG_DIR/"
     echo "  Env:     $HYPRWHSPR_CONFIG_DIR/env"
-    echo "  Status:  $XDG_CACHE_HOME/hyprwhspr/status.json"
-    echo "  History: $XDG_DATA_HOME/hyprwhspr/transcriptions.json"
+    echo "  Status:  $XDG_CACHE_HOME/hyprwhspr-rs/status.json"
+    echo "  History: $XDG_DATA_HOME/hyprwhspr-rs/transcriptions.json"
     echo ""
     echo "Commands:"
     echo "  Check status:   systemctl --user status hyprwhspr-rs"

@@ -3,22 +3,22 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-/// XDG-compliant paths for hyprwhspr data
+/// XDG-compliant paths for hyprwhspr-rs data
 pub mod paths {
     use std::path::PathBuf;
 
-    /// ~/.cache/hyprwhspr/ - ephemeral status for Waybar
+    /// ~/.cache/hyprwhspr-rs/ - ephemeral status for Waybar
     pub fn cache_dir() -> PathBuf {
         directories::BaseDirs::new()
-            .map(|d| d.cache_dir().join("hyprwhspr"))
-            .unwrap_or_else(|| PathBuf::from("/tmp/hyprwhspr"))
+            .map(|d| d.cache_dir().join("hyprwhspr-rs"))
+            .unwrap_or_else(|| PathBuf::from("/tmp/hyprwhspr-rs"))
     }
 
-    /// ~/.local/share/hyprwhspr/ - persistent transcription history
+    /// ~/.local/share/hyprwhspr-rs/ - persistent transcription history
     pub fn data_dir() -> PathBuf {
         directories::BaseDirs::new()
-            .map(|d| d.data_dir().join("hyprwhspr"))
-            .unwrap_or_else(|| PathBuf::from("/tmp/hyprwhspr"))
+            .map(|d| d.data_dir().join("hyprwhspr-rs"))
+            .unwrap_or_else(|| PathBuf::from("/tmp/hyprwhspr-rs"))
     }
 
     pub fn status_file() -> PathBuf {

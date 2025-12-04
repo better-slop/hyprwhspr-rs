@@ -718,7 +718,7 @@ impl ConfigManager {
 
     pub fn get_whisper_binary_candidates(&self, include_fallbacks: bool) -> Vec<PathBuf> {
         let home = env::var("HOME").expect("HOME not set");
-        let local_dir = PathBuf::from(&home).join(".local/share/hyprwhspr/whisper.cpp");
+        let local_dir = PathBuf::from(&home).join(".local/share/hyprwhspr-rs/whisper.cpp");
         let build_bin = local_dir.join("build/bin");
 
         let mut candidates = Vec::new();
@@ -875,7 +875,7 @@ impl ConfigManager {
             dirs.push(system_models);
         }
         if let Ok(home) = env::var("HOME") {
-            let legacy_path = PathBuf::from(home).join(".local/share/hyprwhspr/whisper.cpp/models");
+            let legacy_path = PathBuf::from(home).join(".local/share/hyprwhspr-rs/whisper.cpp/models");
             if legacy_path.exists() {
                 dirs.push(legacy_path);
             }

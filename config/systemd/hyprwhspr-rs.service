@@ -5,13 +5,13 @@ Wants=pipewire.service
 
 [Service]
 Type=simple
-ExecStartPre=/bin/sh -c 'mkdir -p %h/.cache/hyprwhspr'
+ExecStartPre=/bin/sh -c 'mkdir -p %h/.cache/hyprwhspr-rs'
 ExecStart=%h/.cargo/bin/hyprwhspr-rs
 Restart=on-failure
 RestartSec=3
 Environment=RUST_LOG=info
 # Load API keys from env file (- prefix means ignore if missing)
-EnvironmentFile=-%h/.config/hyprwhspr/env
+EnvironmentFile=-%h/.config/hyprwhspr-rs/env
 
 [Install]
 WantedBy=default.target
