@@ -37,8 +37,16 @@ https://github.com/user-attachments/assets/bbbaa1c3-1a7e-4165-ad3d-27b7465e201a
 
 ### From crates.io
 
-```bash
+1. Install the latest release from [crates.io](https://crates.io/crates/hyprwhspr-rs)
+
+```
 cargo install hyprwhspr-rs
+```
+
+2. Install systemd service and Waybar module (optionally, with a WIP elephant/walker menu using `--with-elephant` flag)
+
+```bash
+hyprwhspr-rs install
 ```
 
 ### From source
@@ -47,6 +55,14 @@ cargo install hyprwhspr-rs
 2. `cd hyprwhspr-rs`
 3. `cargo build --release`
 4. `sudo cp target/release/hyprwhspr-rs /usr/local/bin/`
+
+### Waybar Integration
+
+```bash
+./scripts/install-waybar.sh
+```
+
+Installs systemd service, Waybar module, and CSS styles. Shows mic status in your bar.
 
 ## Development
 
@@ -196,7 +212,7 @@ recompiling.
 ## To Do
 
 - [ ] Slop review/clean up
-- [ ] Ship waybar integration (`hyprwhspr-rs --waybar`)
+- [x] Ship waybar integration
 - [x] Release on Cargo
 - [ ] Release on AUR
 - [ ] Add support for other operating systems/setups

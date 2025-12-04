@@ -2,24 +2,23 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 
-/// XDG-compliant paths for hyprwhspr data
+/// XDG-compliant paths for hyprwhspr-rs data
 pub mod paths {
     use std::path::PathBuf;
 
-    /// ~/.cache/hyprwhspr/ - ephemeral status for Waybar
+    /// ~/.cache/hyprwhspr-rs/ - ephemeral status for Waybar
     pub fn cache_dir() -> PathBuf {
         directories::BaseDirs::new()
-            .map(|d| d.cache_dir().join("hyprwhspr"))
-            .unwrap_or_else(|| PathBuf::from("/tmp/hyprwhspr"))
+            .map(|d| d.cache_dir().join("hyprwhspr-rs"))
+            .unwrap_or_else(|| PathBuf::from("/tmp/hyprwhspr-rs"))
     }
 
-    /// ~/.local/share/hyprwhspr/ - persistent transcription history
+    /// ~/.local/share/hyprwhspr-rs/ - persistent transcription history
     pub fn data_dir() -> PathBuf {
         directories::BaseDirs::new()
-            .map(|d| d.data_dir().join("hyprwhspr"))
-            .unwrap_or_else(|| PathBuf::from("/tmp/hyprwhspr"))
+            .map(|d| d.data_dir().join("hyprwhspr-rs"))
+            .unwrap_or_else(|| PathBuf::from("/tmp/hyprwhspr-rs"))
     }
 
     pub fn status_file() -> PathBuf {
@@ -43,10 +42,10 @@ pub enum WaybarState {
 impl WaybarState {
     fn icon(&self) -> &'static str {
         match self {
-            Self::Inactive => "",
-            Self::Active => "󰍬",
+            Self::Inactive => "󰍭",  // mic off icon - always visible
+            Self::Active => "󰍬",    // mic on icon
             Self::Processing => "󰍬",
-            Self::Error => "err",
+            Self::Error => "󰍭",     // mic off with error styling
         }
     }
 
@@ -75,6 +74,7 @@ pub struct TranscriptionEntry {
 }
 
 /// Writes recording status for Waybar to read (JSON format)
+/// Uses atomic writes (temp file + rename) for inotify reliability
 pub struct StatusWriter {
     status_file: PathBuf,
     history_file: PathBuf,
@@ -96,7 +96,7 @@ impl StatusWriter {
         })
     }
 
-    /// Update Waybar status with state and tooltip
+    /// Update Waybar status with state and tooltip using atomic write
     pub fn set_state(&self, state: WaybarState, tooltip: &str) -> Result<()> {
         let status = WaybarStatus {
             text: state.icon().to_string(),
@@ -106,11 +106,14 @@ impl StatusWriter {
         };
 
         let json = serde_json::to_string(&status).context("Failed to serialize status")?;
-        fs::write(&self.status_file, &json).context("Failed to write status file")?;
+
+        // Atomic write: write to temp file, then rename
+        // This ensures inotify sees a single moved_to event
+        let tmp_file = self.status_file.with_extension("tmp");
+        fs::write(&tmp_file, &json).context("Failed to write temp status file")?;
+        fs::rename(&tmp_file, &self.status_file).context("Failed to rename status file")?;
 
         tracing::debug!(state = ?state, tooltip = %tooltip, "Updated Waybar status");
-
-        self.signal_waybar();
         Ok(())
     }
 
@@ -175,21 +178,10 @@ impl StatusWriter {
         Ok(())
     }
 
-    /// Signal Waybar to refresh the custom module
-    fn signal_waybar(&self) {
-        // SIGRTMIN+8 = signal 8 for custom module refresh
-        let _ = Command::new("pkill")
-            .args(["-RTMIN+8", "waybar"])
-            .spawn()
-            .map(|mut child| child.wait());
-    }
-
     /// Clean up status file on shutdown
     pub fn cleanup(&self) -> Result<()> {
-        if self.status_file.exists() {
-            fs::remove_file(&self.status_file).context("Failed to remove status file")?;
-            self.signal_waybar();
-        }
+        // Write final inactive state
+        let _ = self.set_state(WaybarState::Inactive, "Not running");
         Ok(())
     }
 }

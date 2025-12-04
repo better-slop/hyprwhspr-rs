@@ -1,9 +1,10 @@
 {
   "custom/hyprwhspr": {
-    "exec": "cat ~/.cache/hyprwhspr/status.json 2>/dev/null || echo '{\"text\":\"\",\"class\":\"inactive\",\"tooltip\":\"Not running\"}'",
+    "exec": "cat ~/.cache/hyprwhspr-rs/status.json 2>/dev/null || echo '{\"text\":\"󰍭\",\"class\":\"inactive\",\"tooltip\":\"Not running\"}'",
     "return-type": "json",
-    "interval": 0,
-    "signal": 8,
+    "format": "{text}",
+    "interval": 1,
+    "tooltip": true,
     "on-click": "walker --provider menus:hyprwhspr"
   }
 }
