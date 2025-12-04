@@ -43,10 +43,10 @@ pub enum WaybarState {
 impl WaybarState {
     fn icon(&self) -> &'static str {
         match self {
-            Self::Inactive => "",
-            Self::Active => "󰍬",
+            Self::Inactive => "󰍭",  // mic off icon - always visible
+            Self::Active => "󰍬",    // mic on icon
             Self::Processing => "󰍬",
-            Self::Error => "err",
+            Self::Error => "󰍭",     // mic off with error styling
         }
     }
 
@@ -177,11 +177,15 @@ impl StatusWriter {
 
     /// Signal Waybar to refresh the custom module
     fn signal_waybar(&self) {
-        // SIGRTMIN+8 = signal 8 for custom module refresh
-        let _ = Command::new("pkill")
+        // SIGRTMIN+8 for custom module refresh
+        // Use full path and run synchronously to ensure it executes
+        let result = Command::new("/usr/bin/pkill")
             .args(["-RTMIN+8", "waybar"])
-            .spawn()
-            .map(|mut child| child.wait());
+            .status();
+
+        if let Err(e) = result {
+            tracing::debug!("Failed to signal waybar: {}", e);
+        }
     }
 
     /// Clean up status file on shutdown

@@ -246,11 +246,16 @@ config_file = "$config_file"
 with open(config_file, 'r') as f:
     content = f.read()
 
-content_no_comments = re.sub(r'(?<!:)//.*$', '', content, flags=re.MULTILINE)
-content_no_comments = re.sub(r'/\*.*?\*/', '', content_no_comments, flags=re.DOTALL)
+# Strip JSONC features to make valid JSON
+# Remove // comments (but not :// in URLs)
+content_clean = re.sub(r'(?<!:)//.*$', '', content, flags=re.MULTILINE)
+# Remove /* */ comments
+content_clean = re.sub(r'/\*.*?\*/', '', content_clean, flags=re.DOTALL)
+# Remove trailing commas before ] or }
+content_clean = re.sub(r',(\s*[}\]])', r'\1', content_clean)
 
 try:
-    config = json.loads(content_no_comments)
+    config = json.loads(content_clean)
 except json.JSONDecodeError as e:
     print(f"Warning: Could not parse Waybar config as JSON: {e}", file=sys.stderr)
     sys.exit(1)
