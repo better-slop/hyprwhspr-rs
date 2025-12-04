@@ -11,6 +11,8 @@ ExecStopPost=/bin/sh -c 'rm -f %h/.cache/hyprwhspr/status.json && pkill -RTMIN+8
 Restart=on-failure
 RestartSec=3
 Environment=RUST_LOG=info
+# Load API keys from env file (- prefix means ignore if missing)
+EnvironmentFile=-%h/.config/hyprwhspr/env
 
 [Install]
 WantedBy=default.target
