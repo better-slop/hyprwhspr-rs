@@ -1,9 +1,16 @@
 [Unit]
 Description=hyprwhspr-rs Voice Dictation Service
 After=graphical-session.target pipewire.service
-Wants=
+Wants=pipewire.service
 
 [Service]
+Type=simple
+ExecStart=%h/.cargo/bin/hyprwhspr-rs
+ExecStartPost=/bin/sh -c 'mkdir -p %h/.cache/hyprwhspr && echo "{\"text\":\"\",\"class\":\"inactive\",\"tooltip\":\"Ready\"}" > %h/.cache/hyprwhspr/status.json && pkill -RTMIN+8 waybar || true'
+ExecStopPost=/bin/sh -c 'rm -f %h/.cache/hyprwhspr/status.json && pkill -RTMIN+8 waybar || true'
+Restart=on-failure
+RestartSec=3
+Environment=RUST_LOG=info
 
 [Install]
 WantedBy=default.target
