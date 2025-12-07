@@ -22,28 +22,33 @@ function GetEntries()
         return entries
     end
 
-    for line in file:lines() do
-        if line and line ~= "" then
-            local item = jsonDecode(line)
-            if item then
-                local display = item.text or ""
-                if #display > 60 then
-                    display = string.sub(display, 1, 57) .. "..."
-                end
+    local content = file:read("*a")
+    file:close()
 
-                table.insert(entries, {
-                    Text = display,
-                    Subtext = item.timestamp or "",
-                    Value = item.text or "",
-                    Icon = "edit-copy",
-                    Preview = item.text or "",
-                    PreviewType = "text",
-                })
-            end
-        end
+    if not content or content == "" then
+        return entries
     end
 
-    file:close()
+    local data = jsonDecode(content)
+    if not data then
+        return entries
+    end
+
+    for _, item in ipairs(data) do
+        local display = item.text or ""
+        if #display > 60 then
+            display = string.sub(display, 1, 57) .. "..."
+        end
+
+        table.insert(entries, {
+            Text = display,
+            Subtext = item.timestamp or "",
+            Value = item.text or "",
+            Icon = "edit-copy",
+            Preview = item.text or "",
+            PreviewType = "text",
+        })
+    end
 
     return entries
 end
