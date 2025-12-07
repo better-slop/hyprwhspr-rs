@@ -4,7 +4,7 @@ pub mod waybar;
 
 use crate::cli::InstallArgs;
 use anyhow::{Context, Result};
-use dialoguer::{theme::ColorfulTheme, Confirm, MultiSelect};
+use dialoguer::{console::Style, theme::ColorfulTheme, Confirm, MultiSelect};
 use owo_colors::OwoColorize;
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
@@ -94,7 +94,15 @@ pub fn run_install(args: &InstallArgs) -> Result<()> {
 fn interactive_select() -> Result<Vec<Component>> {
     let items: Vec<&str> = Component::all().iter().map(|c| c.label()).collect();
 
-    let selections = MultiSelect::with_theme(&ColorfulTheme::default())
+    // Custom theme for monochrome visibility
+    let theme = ColorfulTheme {
+        checked_item_prefix: Style::new().for_stderr().apply_to("● ".to_string()),
+        unchecked_item_prefix: Style::new().for_stderr().apply_to("○ ".to_string()),
+        active_item_style: Style::new().for_stderr().bold().underlined(),
+        ..ColorfulTheme::default()
+    };
+
+    let selections = MultiSelect::with_theme(&theme)
         .with_prompt("Select components to install (Space to toggle, Enter to confirm)")
         .items(&items)
         .defaults(&[true, true, false]) // waybar + systemd on by default
