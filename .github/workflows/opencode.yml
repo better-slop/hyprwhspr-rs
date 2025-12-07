@@ -31,10 +31,11 @@ jobs:
       - name: Run opencode
         uses: sst/opencode/github@latest
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+          ANTHROPIC_API_KEY: ${{ secrets.OC_ANTHROPIC_API_KEY }}
+          ANTHROPIC_BASE_URL: ${{ secrets.OC_ANTHROPIC_BASE_URL }}
           # AZURE_API_KEY: ${{ secrets.AZURE_API_KEY }}
           # AZURE_RESOURCE_NAME: ${{ secrets.AZURE_RESOURCE_NAME }}
+          JINA_API_KEY: ${{ secrets.OC_JINA_API_KEY }}
 
         with:
           model: anthropic/claude-opus-4-5

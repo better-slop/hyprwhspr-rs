@@ -45,10 +45,10 @@ jobs:
 
       - name: Review PR
         env:
-          # ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          # ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
-          AZURE_API_KEY: ${{ secrets.AZURE_API_KEY }}
-          AZURE_RESOURCE_NAME: ${{ secrets.AZURE_RESOURCE_NAME }}
+          # ANTHROPIC_API_KEY: ${{ secrets.OC_ANTHROPIC_API_KEY }}
+          # ANTHROPIC_BASE_URL: ${{ secrets.OC_ANTHROPIC_BASE_URL }}
+          AZURE_API_KEY: ${{ secrets.OC_AZURE_API_KEY }}
+          AZURE_RESOURCE_NAME: ${{ secrets.OC_AZURE_RESOURCE_NAME }}
           OPENCODE_PERMISSION: '{ "bash": { "gh*": "allow", "gh pr review*": "deny", "*": "deny" } }'
           JINA_API_KEY: ${{ secrets.JINA_API_KEY }}
           PR_TITLE: ${{ steps.pr-details.outputs.title }}
