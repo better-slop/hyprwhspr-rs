@@ -1,7 +1,7 @@
 <div align="center">
   <img src="assets/logo.png" alt="hyprwhspr-rs logo" width="200" />
   <h3>hyprwhspr-rs</h3>
-  <p>Rust implementation of <a href="https://github.com/goodroot/hyprwhspr">hyprwhspr</a> | Native speech-to-text voice dictation for Hyprland.</p>
+  <p>Rust implementation of <a href="https://github.com/goodroot/hyprwhspr">hyprwhspr</a> | Blazing fast, native speech-to-text voice dictation for Hyprland and Omarchy | Waybar, Walker, and Elephant integrations (optional)</p>
   <br />
   <pre><code>cargo install hyprwhspr-rs</code></pre>
 </div>
@@ -13,10 +13,11 @@ https://github.com/user-attachments/assets/bbbaa1c3-1a7e-4165-ad3d-27b7465e201a
 
 - whisper.cpp ([GitHub](https://github.com/ggml-org/whisper.cpp), [AUR](https://aur.archlinux.org/packages/whisper.cpp))
 - Groq or Gemini API key (optional)
-  - Groq is cheap and fast as hell. Advanced/pretty formatting not included. [[Data Controls](https://console.groq.com/settings/data-controls)]
-  - Slow, but much better output formatting.
+  - Groq with whisper is cheap (~$0.10 USD/month) and fast as hell. [[Data Controls](https://console.groq.com/settings/data-controls)]
+  - Comparatively, Gemini is very slow but offers better output formatting.
 - Parakeet TDT (optional) - NVIDIA's local ASR model via ONNX
   - Run `./scripts/download-parakeet-tdt.sh` to download model files (~1.2GB)
+  - Very fast, but not as accurate as whisper or Gemini
 
 ## Features
 
@@ -46,7 +47,11 @@ cargo install hyprwhspr-rs
 2. Install systemd service and Waybar module (optionally, with a WIP elephant/walker menu using `--with-elephant` flag)
 
 ```bash
+# Interactive install
 hyprwhspr-rs install
+
+# Optionally, install specific components (systemd, waybar, elephant)
+hyprwhspr-rs install {--all| --service | --waybar | --elephant} {--force | -f}
 ```
 
 ### From source
