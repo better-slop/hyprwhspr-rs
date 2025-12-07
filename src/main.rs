@@ -1,21 +1,23 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
+use clap::Parser;
 use hyprwhspr_rs::{
-    config::TranscriptionProvider, logging::TextPipelineFormatter, ConfigManager, HyprwhsprApp,
+    cli::{Cli, Command},
+    config::TranscriptionProvider,
+    install,
+    logging::TextPipelineFormatter,
+    ConfigManager, HyprwhsprApp,
 };
-use std::env;
-use std::path::PathBuf;
-use std::process::Command;
 use tokio::signal;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args: Vec<String> = env::args().collect();
+    let cli = Cli::parse();
 
     // Handle install command before initializing logging (it has its own output)
-    if args.len() > 1 && args[1] == "install" {
-        return run_install(&args[2..]);
+    if let Some(Command::Install(args)) = cli.command {
+        return install::run_install(&args);
     }
 
     // Initialize logging
@@ -28,9 +30,7 @@ async fn main() -> Result<()> {
         .init();
 
     // Check for test mode
-    let test_mode = args.contains(&"--test".to_string());
-
-    if test_mode {
+    if cli.test {
         return run_test_mode().await;
     }
 
@@ -203,87 +203,4 @@ async fn run_test_mode() -> Result<()> {
     info!("✅ Shutdown complete");
 
     Ok(())
-}
-
-fn run_install(args: &[String]) -> Result<()> {
-    // Find the install script relative to the executable or in known locations
-    let script_path = find_install_script()?;
-
-    let mut cmd = Command::new("bash");
-    cmd.arg(&script_path);
-
-    // Pass through any arguments (e.g., --with-elephant)
-    for arg in args {
-        cmd.arg(arg);
-    }
-
-    // Set HYPRWHSPR_INSTALL_DIR so the script knows where to find config files
-    if let Some(parent) = script_path.parent().and_then(|p| p.parent()) {
-        cmd.env("HYPRWHSPR_INSTALL_DIR", parent);
-    }
-
-    let status = cmd.status().context("Failed to execute install script")?;
-
-    if status.success() {
-        Ok(())
-    } else {
-        anyhow::bail!("Install script exited with status: {}", status);
-    }
-}
-
-fn find_install_script() -> Result<PathBuf> {
-    // Try multiple locations in order of preference
-
-    // 1. Relative to the executable (for installed binary)
-    if let Ok(exe_path) = env::current_exe() {
-        // Check ../share/hyprwhspr-rs/scripts/install-waybar.sh
-        let share_path = exe_path
-            .parent()
-            .and_then(|p| p.parent())
-            .map(|p| p.join("share/hyprwhspr-rs/scripts/install-waybar.sh"));
-        if let Some(path) = share_path {
-            if path.exists() {
-                return Ok(path);
-            }
-        }
-
-        // Check ../scripts/install-waybar.sh (dev layout)
-        let dev_path = exe_path
-            .parent()
-            .and_then(|p| p.parent())
-            .map(|p| p.join("scripts/install-waybar.sh"));
-        if let Some(path) = dev_path {
-            if path.exists() {
-                return Ok(path);
-            }
-        }
-    }
-
-    // 2. Check in repo root (for cargo run)
-    let cargo_manifest = env::var("CARGO_MANIFEST_DIR").ok();
-    if let Some(manifest_dir) = cargo_manifest {
-        let path = PathBuf::from(manifest_dir).join("scripts/install-waybar.sh");
-        if path.exists() {
-            return Ok(path);
-        }
-    }
-
-    // 3. Check current working directory
-    let cwd_path = PathBuf::from("scripts/install-waybar.sh");
-    if cwd_path.exists() {
-        return Ok(cwd_path);
-    }
-
-    // 4. Check XDG data dirs
-    let data_home = env::var("XDG_DATA_HOME")
-        .unwrap_or_else(|_| format!("{}/.local/share", env::var("HOME").unwrap_or_default()));
-    let xdg_path = PathBuf::from(data_home).join("hyprwhspr-rs/scripts/install-waybar.sh");
-    if xdg_path.exists() {
-        return Ok(xdg_path);
-    }
-
-    anyhow::bail!(
-        "Could not find install-waybar.sh script. \
-        Make sure you're running from the hyprwhspr-rs directory or the script is installed."
-    )
 }
