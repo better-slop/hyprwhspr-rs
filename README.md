@@ -180,8 +180,6 @@ Installs systemd service, Waybar module, and CSS styles. Shows mic status in you
 
 </details>
 
-- Shortcut listeners now recover after input device hotplug/disconnect; Omarchy's global paste shortcut stays usable even if keyboards/audio devices are unplugged/replugged.
-
 <details>
   <summary>
     <strong>Earshot VAD trimming</strong> (optional)
