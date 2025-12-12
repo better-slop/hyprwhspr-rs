@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.3.6] (https://github.com/better-slop/hyprwhspr-rs/compare/v0.3.5...v0.3.6) - 2025-12-12
+
+### Fixes
+- pipe walker history selection to wl-copy ([#56](https://github.com/better-slop/hyprwhspr-rs/pull/56))
+
+
+### Other
+- Remove hotplug recovery note from README ([#53](https://github.com/better-slop/hyprwhspr-rs/pull/53))
+
 ## [0.3.5] (https://github.com/better-slop/hyprwhspr-rs/compare/v0.3.4...v0.3.5) - 2025-12-07
 
 ### Docs
