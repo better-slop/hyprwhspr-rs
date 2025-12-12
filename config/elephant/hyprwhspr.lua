@@ -53,13 +53,6 @@ function GetEntries()
     return entries
 end
 
--- Safe copy handling special characters
-Action = "lua:CopyToClipboard"
-
-function CopyToClipboard(value, args)
-    local handle = io.popen("wl-copy", "w")
-    if handle then
-        handle:write(value)
-        handle:close()
-    end
-end
+-- Copy selected entry to clipboard.
+-- Elephant pipes `Value` to stdin when no %VALUE%.
+Action = "wl-copy"
