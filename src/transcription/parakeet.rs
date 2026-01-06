@@ -2,7 +2,7 @@ use crate::config::ParakeetConfig;
 use crate::transcription::postprocess::clean_transcription;
 use crate::transcription::{BackendMetrics, TranscriptionResult};
 use anyhow::{Context, Result};
-use parakeet_rs::{ParakeetTDT, TimestampMode};
+use parakeet_rs::{ParakeetTDT, TimestampMode, Transcriber};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -82,8 +82,7 @@ impl ParakeetTranscriber {
         let duration_secs = audio_data.len() as f32 / 16000.0;
         info!(
             provider = self.provider_name(),
-            "🧠 Transcribing {:.2}s of audio via Parakeet TDT",
-            duration_secs
+            "🧠 Transcribing {:.2}s of audio via Parakeet TDT", duration_secs
         );
 
         let transcribe_start = Instant::now();
