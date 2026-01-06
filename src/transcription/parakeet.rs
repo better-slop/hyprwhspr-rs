@@ -2,7 +2,7 @@ use crate::config::ParakeetConfig;
 use crate::transcription::postprocess::clean_transcription;
 use crate::transcription::{BackendMetrics, TranscriptionResult};
 use anyhow::{Context, Result};
-use parakeet_rs::{ParakeetTDT, TimestampMode};
+use parakeet_rs::{ParakeetTDT, TimestampMode, Transcriber};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
