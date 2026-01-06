@@ -82,8 +82,7 @@ impl ParakeetTranscriber {
         let duration_secs = audio_data.len() as f32 / 16000.0;
         info!(
             provider = self.provider_name(),
-            "🧠 Transcribing {:.2}s of audio via Parakeet TDT",
-            duration_secs
+            "🧠 Transcribing {:.2}s of audio via Parakeet TDT", duration_secs
         );
 
         let transcribe_start = Instant::now();
