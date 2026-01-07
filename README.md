@@ -150,7 +150,7 @@ Installs systemd service, Waybar module, and CSS styles. Shows mic status in you
         "min_speech_ms": 250,
         // Minimum silence gap (ms) required to end a speech segment. Raise if mid-sentence pauses are being split.
         "min_silence_ms": 120,
-        // Maximum speech duration (seconds) before forcing a cut. Use Infinity to leave unlimited.
+        // Maximum speech duration (seconds) before forcing a cut. Use null (or omit) to leave unlimited.
         "max_speech_s": 15.0,
         // Extra padding (ms) added before/after detected speech so words aren't clipped.
         "speech_pad_ms": 80,

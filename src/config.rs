@@ -2,7 +2,7 @@ use crate::paths::expand_tilde;
 use crate::transcription::DEFAULT_PROMPT;
 use anyhow::{anyhow, Context, Result};
 use jsonc_parser::{parse_to_serde_value, ParseOptions};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
@@ -173,6 +173,18 @@ fn default_vad_max_speech_s() -> f32 {
     f32::INFINITY
 }
 
+fn deserialize_vad_max_speech_s<'de, D>(deserializer: D) -> Result<f32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<f32>::deserialize(deserializer)?;
+    Ok(value.unwrap_or_else(default_vad_max_speech_s))
+}
+
+fn is_f32_non_finite(value: &f32) -> bool {
+    !value.is_finite()
+}
+
 fn default_vad_speech_pad_ms() -> u32 {
     30
 }
@@ -249,6 +261,11 @@ pub struct VadConfig {
     pub threshold: f32,
     pub min_speech_ms: u32,
     pub min_silence_ms: u32,
+    #[serde(
+        default = "default_vad_max_speech_s",
+        deserialize_with = "deserialize_vad_max_speech_s",
+        skip_serializing_if = "is_f32_non_finite"
+    )]
     pub max_speech_s: f32,
     pub speech_pad_ms: u32,
     pub samples_overlap: f32,
