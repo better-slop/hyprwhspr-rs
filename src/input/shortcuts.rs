@@ -543,7 +543,9 @@ impl GlobalShortcuts {
                     _ => None,
                 };
                 if let Some(event_type) = event_type {
-                    let _ = tx.send(event_type);
+                    if tx.send(event_type).is_err() {
+                        return Ok(());
+                    }
                 }
             }
             if !saw_event {
@@ -614,5 +616,13 @@ mod tests {
     fn does_not_treat_other_errors_as_disconnect() {
         let err = io::Error::from(io::ErrorKind::BrokenPipe);
         assert!(!is_device_disconnect_error(&err));
+    }
+
+    #[test]
+    fn filters_input_event_nodes() {
+        assert!(is_input_event_node(Path::new("/dev/input/event0")));
+        assert!(is_input_event_node(Path::new("/dev/input/event10")));
+        assert!(!is_input_event_node(Path::new("/dev/input/mouse0")));
+        assert!(!is_input_event_node(Path::new("/tmp/event0")));
     }
 }
