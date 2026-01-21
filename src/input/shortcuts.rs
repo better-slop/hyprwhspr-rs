@@ -3,7 +3,7 @@ use evdev::{Device, InputEventKind, Key};
 use std::collections::HashSet;
 use std::io;
 use std::os::fd::AsRawFd;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{
     mpsc as std_mpsc,
     atomic::{AtomicBool, Ordering},
@@ -34,10 +34,22 @@ pub struct ShortcutEvent {
 }
 
 pub struct GlobalShortcuts {
-    devices: Vec<Device>,
+    devices: Vec<KeyboardDevice>,
     target_keys: HashSet<Key>,
     shortcut_name: String,
     kind: ShortcutKind,
+}
+
+struct KeyboardDevice {
+    path: PathBuf,
+    device: Device,
+}
+
+#[derive(Debug, Clone)]
+enum InputDeviceEvent {
+    Added(PathBuf),
+    Removed(PathBuf),
+    Changed(PathBuf),
 }
 
 impl GlobalShortcuts {
@@ -75,10 +87,6 @@ impl GlobalShortcuts {
         let mut last_trigger = Instant::now() - Duration::from_secs(10);
         let debounce_duration = Duration::from_millis(500);
         let mut combination_active = false;
-        let mut last_device_refresh = Instant::now();
-        let device_rescan_interval = Duration::from_secs(1);
-        let rescan_window = Duration::from_secs(15);
-        let mut rescan_until: Option<Instant> = None;
         let (rescan_tx, rescan_rx) = std_mpsc::channel();
         let monitor_stop = stop.clone();
         std::thread::spawn(move || {
@@ -102,37 +110,23 @@ impl GlobalShortcuts {
                 break 'outer;
             }
 
-            let mut device_refresh_needed = false;
-
-            if self.devices.is_empty()
-                && last_device_refresh.elapsed() >= device_rescan_interval
-            {
-                device_refresh_needed = true;
+            while let Ok(event) = rescan_rx.try_recv() {
+                self.handle_input_device_event(event);
+                pressed_keys.clear();
+                combination_active = false;
             }
 
-            if let Some(until) = rescan_until {
-                if Instant::now() > until {
-                    rescan_until = None;
-                } else if last_device_refresh.elapsed() >= device_rescan_interval {
-                    device_refresh_needed = true;
-                }
-            }
-
-            while rescan_rx.try_recv().is_ok() {
-                debug!("Input device change detected; scheduling keyboard rescan");
-                device_refresh_needed = true;
-                rescan_until = Some(Instant::now() + rescan_window);
-            }
+            let mut removed_devices = HashSet::new();
 
             let target_keys = &self.target_keys;
             let shortcut_name = &self.shortcut_name;
 
-            for device in &mut self.devices {
+            for entry in &mut self.devices {
                 if stop.load(Ordering::Relaxed) {
                     break 'outer;
                 }
                 // Fetch events from this device
-                match device.fetch_events() {
+                match entry.device.fetch_events() {
                     Ok(events) => {
                         for event in events {
                             if stop.load(Ordering::Relaxed) {
@@ -228,9 +222,8 @@ impl GlobalShortcuts {
                             error!("Error fetching events: {}", e);
 
                             if is_device_disconnect_error(&e) {
-                                warn!("Input device went away; scheduling keyboard rescan");
-                                device_refresh_needed = true;
-                                rescan_until = Some(Instant::now() + rescan_window);
+                                warn!("Input device went away; removing device");
+                                removed_devices.insert(entry.path.clone());
                             }
                         }
                         if stop.load(Ordering::Relaxed) {
@@ -240,38 +233,21 @@ impl GlobalShortcuts {
                 }
             }
 
-            if device_refresh_needed
-                && last_device_refresh.elapsed() >= device_rescan_interval
-            {
-                last_device_refresh = Instant::now();
+            if !removed_devices.is_empty() {
+                let before = self.devices.len();
+                self.devices
+                    .retain(|device| !removed_devices.contains(&device.path));
+                let removed = before.saturating_sub(self.devices.len());
+                if removed > 0 {
+                    info!("Removed {} keyboard device(s)", removed);
+                }
                 pressed_keys.clear();
                 combination_active = false;
-
-                if let Err(err) = self.refresh_devices() {
-                    error!("Failed to refresh keyboard devices: {}", err);
-                }
             }
 
             // Small sleep to prevent busy-waiting
             std::thread::sleep(Duration::from_millis(10));
         }
-
-        Ok(())
-    }
-
-    fn refresh_devices(&mut self) -> Result<()> {
-        let devices = Self::find_keyboard_devices()?;
-
-        if devices.is_empty() {
-            warn!("No keyboard devices found after refresh; will retry periodically");
-        } else {
-            info!(
-                "Keyboard devices refreshed - monitoring {} device(s)",
-                devices.len()
-            );
-        }
-
-        self.devices = devices;
 
         Ok(())
     }
@@ -378,24 +354,17 @@ impl GlobalShortcuts {
         }
     }
 
-    fn find_keyboard_devices() -> Result<Vec<Device>> {
+    fn find_keyboard_devices() -> Result<Vec<KeyboardDevice>> {
         let mut keyboards = Vec::new();
 
         for (path, device) in evdev::enumerate() {
-            // Check if device supports keyboard events
-            if let Some(keys) = device.supported_keys() {
-                // Verify it has typical keyboard keys
-                if keys.contains(Key::KEY_A)
-                    && keys.contains(Key::KEY_S)
-                    && keys.contains(Key::KEY_D)
-                {
-                    if let Err(err) = set_device_nonblocking(&device) {
-                        warn!("Failed to set non-blocking mode for {:?}: {}", path, err);
-                    }
-                    let name = device.name().unwrap_or("Unknown");
-                    info!("Found keyboard device: {} at {:?}", name, path);
-                    keyboards.push(device);
+            if Self::is_keyboard_device(&device) {
+                if let Err(err) = set_device_nonblocking(&device) {
+                    warn!("Failed to set non-blocking mode for {:?}: {}", path, err);
                 }
+                let name = device.name().unwrap_or("Unknown");
+                info!("Found keyboard device: {} at {:?}", name, path);
+                keyboards.push(KeyboardDevice { path, device });
             }
         }
 
@@ -412,19 +381,85 @@ impl GlobalShortcuts {
         let mut keyboards = Vec::new();
 
         for (path, device) in evdev::enumerate() {
-            if let Some(keys) = device.supported_keys() {
-                if keys.contains(Key::KEY_A) && keys.contains(Key::KEY_ENTER) {
-                    let name = device.name().unwrap_or("Unknown").to_string();
-                    keyboards.push((path, name));
-                }
+            if Self::is_keyboard_device(&device) {
+                let name = device.name().unwrap_or("Unknown").to_string();
+                keyboards.push((path, name));
             }
         }
 
         Ok(keyboards)
     }
 
+    fn is_keyboard_device(device: &Device) -> bool {
+        device.supported_keys().is_some_and(|keys| {
+            keys.contains(Key::KEY_A) && keys.contains(Key::KEY_S) && keys.contains(Key::KEY_D)
+        })
+    }
+
+    fn open_keyboard_device(path: &Path) -> Result<Option<KeyboardDevice>> {
+        let device = Device::open(path)?;
+        if !Self::is_keyboard_device(&device) {
+            return Ok(None);
+        }
+        if let Err(err) = set_device_nonblocking(&device) {
+            warn!("Failed to set non-blocking mode for {:?}: {}", path, err);
+        }
+        let name = device.name().unwrap_or("Unknown");
+        info!("Found keyboard device: {} at {:?}", name, path);
+        Ok(Some(KeyboardDevice {
+            path: path.to_path_buf(),
+            device,
+        }))
+    }
+
+    fn handle_input_device_event(&mut self, event: InputDeviceEvent) {
+        match event {
+            InputDeviceEvent::Added(path) => self.add_keyboard_device(path),
+            InputDeviceEvent::Removed(path) => self.remove_keyboard_device(&path),
+            InputDeviceEvent::Changed(path) => {
+                self.remove_keyboard_device(&path);
+                self.add_keyboard_device(path);
+            }
+        }
+    }
+
+    fn add_keyboard_device(&mut self, path: PathBuf) {
+        if self.devices.iter().any(|device| device.path == path) {
+            return;
+        }
+        match Self::open_keyboard_device(&path) {
+            Ok(Some(device)) => {
+                self.devices.push(device);
+                info!(
+                    "Keyboard devices refreshed - monitoring {} device(s)",
+                    self.devices.len()
+                );
+            }
+            Ok(None) => {
+                debug!("Input device added but not a keyboard: {:?}", path);
+            }
+            Err(err) => {
+                warn!("Failed to open input device {:?}: {}", path, err);
+            }
+        }
+    }
+
+    fn remove_keyboard_device(&mut self, path: &Path) {
+        let before = self.devices.len();
+        self.devices.retain(|device| device.path != path);
+        if self.devices.len() != before {
+            info!(
+                "Keyboard devices refreshed - monitoring {} device(s)",
+                self.devices.len()
+            );
+        }
+        if self.devices.is_empty() {
+            warn!("No keyboard devices found!");
+        }
+    }
+
     fn watch_input_devices(
-        tx: std_mpsc::Sender<()>,
+        tx: std_mpsc::Sender<InputDeviceEvent>,
         stop: Arc<AtomicBool>,
     ) -> Result<()> {
         let monitor = MonitorBuilder::new()?
@@ -441,14 +476,20 @@ impl GlobalShortcuts {
                 if stop.load(Ordering::Relaxed) {
                     break;
                 }
-                if !is_input_event_node(&event) {
+                let Some(path) = event.device().devnode().map(Path::to_path_buf) else {
+                    continue;
+                };
+                if !is_input_event_node(&path) {
                     continue;
                 }
-                match event.event_type() {
-                    EventType::Add | EventType::Remove | EventType::Change => {
-                        let _ = tx.send(());
-                    }
-                    _ => {}
+                let event_type = match event.event_type() {
+                    EventType::Add => Some(InputDeviceEvent::Added(path)),
+                    EventType::Remove => Some(InputDeviceEvent::Removed(path)),
+                    EventType::Change => Some(InputDeviceEvent::Changed(path)),
+                    _ => None,
+                };
+                if let Some(event_type) = event_type {
+                    let _ = tx.send(event_type);
                 }
             }
             if !saw_event {
@@ -493,11 +534,8 @@ fn set_device_nonblocking(device: &Device) -> Result<()> {
     Ok(())
 }
 
-fn is_input_event_node(event: &udev::Event) -> bool {
-    event
-        .device()
-        .devnode()
-        .and_then(|node| node.to_str())
+fn is_input_event_node(path: &Path) -> bool {
+    path.to_str()
         .is_some_and(|node| node.starts_with("/dev/input/event"))
 }
 
