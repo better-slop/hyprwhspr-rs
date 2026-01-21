@@ -5,12 +5,14 @@ use std::io;
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
 use std::sync::{
+    mpsc as std_mpsc,
     atomic::{AtomicBool, Ordering},
     Arc,
 };
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
+use udev::{EventType, MonitorBuilder};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShortcutKind {
@@ -77,6 +79,13 @@ impl GlobalShortcuts {
         let device_rescan_interval = Duration::from_secs(1);
         let rescan_window = Duration::from_secs(15);
         let mut rescan_until: Option<Instant> = None;
+        let (rescan_tx, rescan_rx) = std_mpsc::channel();
+        let monitor_stop = stop.clone();
+        std::thread::spawn(move || {
+            if let Err(err) = Self::watch_input_devices(rescan_tx, monitor_stop) {
+                warn!("Input device monitor stopped: {}", err);
+            }
+        });
 
         let listen_label = match self.kind {
             ShortcutKind::Hold => "hold",
@@ -107,6 +116,12 @@ impl GlobalShortcuts {
                 } else if last_device_refresh.elapsed() >= device_rescan_interval {
                     device_refresh_needed = true;
                 }
+            }
+
+            while rescan_rx.try_recv().is_ok() {
+                debug!("Input device change detected; scheduling keyboard rescan");
+                device_refresh_needed = true;
+                rescan_until = Some(Instant::now() + rescan_window);
             }
 
             let target_keys = &self.target_keys;
@@ -407,6 +422,42 @@ impl GlobalShortcuts {
 
         Ok(keyboards)
     }
+
+    fn watch_input_devices(
+        tx: std_mpsc::Sender<()>,
+        stop: Arc<AtomicBool>,
+    ) -> Result<()> {
+        let monitor = MonitorBuilder::new()?
+            .match_subsystem("input")?
+            .listen()?;
+
+        loop {
+            if stop.load(Ordering::Relaxed) {
+                break;
+            }
+            let mut saw_event = false;
+            for event in monitor.iter() {
+                saw_event = true;
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                if !is_input_event_node(&event) {
+                    continue;
+                }
+                match event.event_type() {
+                    EventType::Add | EventType::Remove | EventType::Change => {
+                        let _ = tx.send(());
+                    }
+                    _ => {}
+                }
+            }
+            if !saw_event {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+
+        Ok(())
+    }
 }
 
 fn is_device_disconnect_error(err: &io::Error) -> bool {
@@ -440,6 +491,14 @@ fn set_device_nonblocking(device: &Device) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn is_input_event_node(event: &udev::Event) -> bool {
+    event
+        .device()
+        .devnode()
+        .and_then(|node| node.to_str())
+        .is_some_and(|node| node.starts_with("/dev/input/event"))
 }
 
 #[cfg(test)]
