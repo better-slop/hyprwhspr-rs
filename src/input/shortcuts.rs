@@ -75,6 +75,8 @@ impl GlobalShortcuts {
         let mut combination_active = false;
         let mut last_device_refresh = Instant::now();
         let device_rescan_interval = Duration::from_secs(1);
+        let rescan_window = Duration::from_secs(15);
+        let mut rescan_until: Option<Instant> = None;
 
         let listen_label = match self.kind {
             ShortcutKind::Hold => "hold",
@@ -97,6 +99,14 @@ impl GlobalShortcuts {
                 && last_device_refresh.elapsed() >= device_rescan_interval
             {
                 device_refresh_needed = true;
+            }
+
+            if let Some(until) = rescan_until {
+                if Instant::now() > until {
+                    rescan_until = None;
+                } else if last_device_refresh.elapsed() >= device_rescan_interval {
+                    device_refresh_needed = true;
+                }
             }
 
             let target_keys = &self.target_keys;
@@ -205,6 +215,7 @@ impl GlobalShortcuts {
                             if is_device_disconnect_error(&e) {
                                 warn!("Input device went away; scheduling keyboard rescan");
                                 device_refresh_needed = true;
+                                rescan_until = Some(Instant::now() + rescan_window);
                             }
                         }
                         if stop.load(Ordering::Relaxed) {
