@@ -50,12 +50,13 @@ enum InputDeviceEvent {
     Added(PathBuf),
     Removed(PathBuf),
     Changed(PathBuf),
+    MonitorUnavailable(String),
 }
 
 impl GlobalShortcuts {
     pub fn new(shortcut: &str, kind: ShortcutKind) -> Result<Self> {
         let target_keys = Self::parse_shortcut(shortcut)?;
-        let devices = Self::find_keyboard_devices()?;
+        let devices = Self::find_keyboard_devices(true)?;
 
         if devices.is_empty() {
             return Err(anyhow::anyhow!("No keyboard devices found"));
@@ -87,11 +88,15 @@ impl GlobalShortcuts {
         let mut last_trigger = Instant::now() - Duration::from_secs(10);
         let debounce_duration = Duration::from_millis(500);
         let mut combination_active = false;
+        let fallback_rescan_interval = Duration::from_secs(1);
+        let mut fallback_rescan_enabled = false;
+        let mut last_fallback_rescan = Instant::now();
         let (rescan_tx, rescan_rx) = std_mpsc::channel();
         let monitor_stop = stop.clone();
         std::thread::spawn(move || {
-            if let Err(err) = Self::watch_input_devices(rescan_tx, monitor_stop) {
-                warn!("Input device monitor stopped: {}", err);
+            let monitor_tx = rescan_tx.clone();
+            if let Err(err) = Self::watch_input_devices(monitor_tx, monitor_stop) {
+                let _ = rescan_tx.send(InputDeviceEvent::MonitorUnavailable(err.to_string()));
             }
         });
 
@@ -111,9 +116,23 @@ impl GlobalShortcuts {
             }
 
             while let Ok(event) = rescan_rx.try_recv() {
-                self.handle_input_device_event(event);
-                pressed_keys.clear();
-                combination_active = false;
+                match event {
+                    InputDeviceEvent::MonitorUnavailable(reason) => {
+                        if !fallback_rescan_enabled {
+                            warn!(
+                                "Input device monitor unavailable ({}); falling back to periodic rescan",
+                                reason
+                            );
+                        }
+                        fallback_rescan_enabled = true;
+                        last_fallback_rescan = Instant::now() - fallback_rescan_interval;
+                    }
+                    _ => {
+                        self.handle_input_device_event(event);
+                        pressed_keys.clear();
+                        combination_active = false;
+                    }
+                }
             }
 
             let mut removed_devices = HashSet::new();
@@ -245,6 +264,17 @@ impl GlobalShortcuts {
                 combination_active = false;
             }
 
+            if fallback_rescan_enabled
+                && last_fallback_rescan.elapsed() >= fallback_rescan_interval
+            {
+                last_fallback_rescan = Instant::now();
+                pressed_keys.clear();
+                combination_active = false;
+                if let Err(err) = self.refresh_devices() {
+                    error!("Failed to refresh keyboard devices: {}", err);
+                }
+            }
+
             // Small sleep to prevent busy-waiting
             std::thread::sleep(Duration::from_millis(10));
         }
@@ -354,7 +384,7 @@ impl GlobalShortcuts {
         }
     }
 
-    fn find_keyboard_devices() -> Result<Vec<KeyboardDevice>> {
+    fn find_keyboard_devices(log_devices: bool) -> Result<Vec<KeyboardDevice>> {
         let mut keyboards = Vec::new();
 
         for (path, device) in evdev::enumerate() {
@@ -363,7 +393,9 @@ impl GlobalShortcuts {
                     warn!("Failed to set non-blocking mode for {:?}: {}", path, err);
                 }
                 let name = device.name().unwrap_or("Unknown");
-                info!("Found keyboard device: {} at {:?}", name, path);
+                if log_devices {
+                    info!("Found keyboard device: {} at {:?}", name, path);
+                }
                 keyboards.push(KeyboardDevice { path, device });
             }
         }
@@ -388,6 +420,27 @@ impl GlobalShortcuts {
         }
 
         Ok(keyboards)
+    }
+
+    fn refresh_devices(&mut self) -> Result<()> {
+        let devices = Self::find_keyboard_devices(false)?;
+        let previous = self.devices.len();
+        let updated = devices.len();
+
+        if updated == 0 && previous != 0 {
+            warn!("No keyboard devices found!");
+        } else if updated != previous {
+            info!(
+                "Keyboard devices refreshed - monitoring {} device(s)",
+                updated
+            );
+        } else {
+            debug!("Keyboard devices refreshed - monitoring {} device(s)", updated);
+        }
+
+        self.devices = devices;
+
+        Ok(())
     }
 
     fn is_keyboard_device(device: &Device) -> bool {
@@ -420,6 +473,7 @@ impl GlobalShortcuts {
                 self.remove_keyboard_device(&path);
                 self.add_keyboard_device(path);
             }
+            InputDeviceEvent::MonitorUnavailable(_) => {}
         }
     }
 
