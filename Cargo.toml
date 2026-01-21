@@ -35,6 +35,7 @@ earshot = "0.1"
 
 # Input
 evdev = "0.12"
+udev = "0.9.3"
 arboard = { version = "3", features = ["wayland-data-control"] }
 enigo = { version = "0.2", default-features = false, features = ["wayland"] }
 libc = "0.2"
