@@ -5,6 +5,9 @@
   <br />
   <pre><code>cargo install hyprwhspr-rs</code></pre>
 </div>
+
+[![release-plz](https://github.com/better-slop/hyprwhspr-rs/actions/workflows/release-plz.yml/badge.svg)](https://github.com/better-slop/hyprwhspr-rs/actions/workflows/release-plz.yml)
+
 <hr />
 
 https://github.com/user-attachments/assets/bbbaa1c3-1a7e-4165-ad3d-27b7465e201a
