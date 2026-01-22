@@ -94,10 +94,10 @@ jobs:
             echo "## Commits"
             if [ -n "${prev_tag}" ]; then
               git log --pretty=format:"- %s" "${prev_tag}..${current_tag}" \
-                | sed -E 's/\\(#([0-9]+)\\)/([#\\1](https:\\/\\/github.com\\/better-slop\\/hyprwhspr-rs\\/pull\\/\\1))/g'
+                | sed -E 's|\\(#([0-9]+)\\)|([#\\1](https://github.com/better-slop/hyprwhspr-rs/pull/\\1))|g'
             else
               git log --pretty=format:"- %s" "${current_tag}" \
-                | sed -E 's/\\(#([0-9]+)\\)/([#\\1](https:\\/\\/github.com\\/better-slop\\/hyprwhspr-rs\\/pull\\/\\1))/g'
+                | sed -E 's|\\(#([0-9]+)\\)|([#\\1](https://github.com/better-slop/hyprwhspr-rs/pull/\\1))|g'
             fi
           } >> release-notes.md
 
