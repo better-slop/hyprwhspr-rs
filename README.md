@@ -16,13 +16,13 @@ https://github.com/user-attachments/assets/bbbaa1c3-1a7e-4165-ad3d-27b7465e201a
 
 - whisper.cpp ([GitHub](https://github.com/ggml-org/whisper.cpp), [AUR](https://aur.archlinux.org/packages/whisper.cpp))
 - libudev + pkg-config (required for hotplug detection; `libudev-dev` on Debian/Ubuntu)
+- GNU-only binaries (no musl releases)
 - Groq or Gemini API key (optional)
   - Groq with whisper is cheap (~$0.10 USD/month) and fast as hell. [[Data Controls](https://console.groq.com/settings/data-controls)]
   - Comparatively, Gemini is very slow but offers better output formatting.
 - Parakeet TDT (optional) - NVIDIA's local ASR model via ONNX
   - Run `./scripts/download-parakeet-tdt.sh` to download model files (~1.2GB)
   - Very fast, but not as accurate as whisper or Gemini
-  - Not available on musl builds (use the GNU release)
 
 ## Features
 
@@ -211,7 +211,7 @@ recompiling.
 1. Use [Conventional Commits](https://www.conventionalcommits.org/) – `fix:` bumps patch, `feat:` bumps minor, and `type!:` indicates a breaking change (major bump).
 2. On every push to `main`, the `release-plz` workflow runs `release-pr` to open or refresh a `release-plz-*` pull request. Review the proposed version and changelog there.
 3. When the release PR looks good, merge it. The same workflow runs `release-plz release`, tagging (`vX.Y.Z`) and publishing the crate to crates.io if it’s a stable tag.
-4. The tag triggers the `release` workflow, which builds the Linux binaries (GNU + musl), uploads the tarballs + checksums, and publishes the GitHub release with the full commit list (plus PR links when available).
+4. The tag triggers the `release` workflow, which builds the Linux GNU binary, uploads the tarball + checksum, and publishes the GitHub release with the full commit list (plus PR links when available).
 
 > Define `CARGO_REGISTRY_TOKEN` in the repository secrets with publish-only permissions so the workflow can push stable releases to crates.io.
 

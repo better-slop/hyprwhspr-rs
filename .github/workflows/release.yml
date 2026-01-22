@@ -14,16 +14,8 @@ env:
 
 jobs:
   build:
-    name: build-${{ matrix.target }}
+    name: build-x86_64-unknown-linux-gnu
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            build: cargo
-          - target: x86_64-unknown-linux-musl
-            build: cross
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -32,11 +24,8 @@ jobs:
 
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
 
       - name: Install system dependencies
-        if: matrix.build == 'cargo'
         run: |
           sudo apt-get update
           sudo apt-get install -y pkg-config libasound2-dev libxkbcommon-dev libudev-dev
@@ -44,35 +33,22 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Install cross
-        if: matrix.build == 'cross'
-        run: cargo install cross --locked
-
       - name: Build
-        run: |
-          build_args=""
-          if [ "${{ matrix.target }}" = "x86_64-unknown-linux-musl" ]; then
-            build_args="--no-default-features"
-          fi
-          if [ "${{ matrix.build }}" = "cross" ]; then
-            cross build --release --target "${{ matrix.target }}" ${build_args}
-          else
-            cargo build --release --target "${{ matrix.target }}" ${build_args}
-          fi
+        run: cargo build --release
 
       - name: Package artifacts
         run: |
           set -euo pipefail
           version="${GITHUB_REF_NAME#v}"
           mkdir -p dist
-          cp "target/${{ matrix.target }}/release/hyprwhspr-rs" dist/hyprwhspr-rs
-          (cd dist && tar -czf "hyprwhspr-rs-${version}-${{ matrix.target }}.tar.gz" hyprwhspr-rs)
-          (cd dist && sha256sum "hyprwhspr-rs-${version}-${{ matrix.target }}.tar.gz" > "hyprwhspr-rs-${version}-${{ matrix.target }}.tar.gz.sha256")
+          cp "target/release/hyprwhspr-rs" dist/hyprwhspr-rs
+          (cd dist && tar -czf "hyprwhspr-rs-${version}-x86_64-unknown-linux-gnu.tar.gz" hyprwhspr-rs)
+          (cd dist && sha256sum "hyprwhspr-rs-${version}-x86_64-unknown-linux-gnu.tar.gz" > "hyprwhspr-rs-${version}-x86_64-unknown-linux-gnu.tar.gz.sha256")
 
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: hyprwhspr-rs-${{ github.ref_name }}-${{ matrix.target }}
+          name: hyprwhspr-rs-${{ github.ref_name }}-x86_64-unknown-linux-gnu
           path: |
             dist/hyprwhspr-rs-*.tar.gz
             dist/hyprwhspr-rs-*.sha256
