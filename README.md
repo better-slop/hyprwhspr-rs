@@ -210,9 +210,9 @@ recompiling.
 1. Use [Conventional Commits](https://www.conventionalcommits.org/) – `fix:` bumps patch, `feat:` bumps minor, and `type!:` indicates a breaking change (major bump).
 2. On every push to `main`, the `release-plz` workflow runs `release-pr` to open or refresh a `release-plz-*` pull request. Review the proposed version and changelog there.
 3. When the release PR looks good, merge it. The same workflow runs `release-plz release`, tagging (`vX.Y.Z`) and publishing the crate to crates.io if it’s a stable tag.
-4. The tag triggers the `release` workflow, which builds the Linux binary, uploads the tarball + checksum, and publishes the GitHub release.
+4. The tag triggers the `release` workflow, which builds the Linux binaries (GNU + musl), uploads the tarballs + checksums, and publishes the GitHub release with the full commit list (plus PR links when available).
 
-> Define `CRATES_IO_TOKEN` in the repository secrets with publish-only permissions so the workflow can push stable releases to crates.io.
+> Define `CARGO_REGISTRY_TOKEN` in the repository secrets with publish-only permissions so the workflow can push stable releases to crates.io.
 
 </details>
 

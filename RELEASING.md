@@ -10,7 +10,7 @@ Releases are automated with [release-plz](https://crates.io/crates/release-plz).
   - `<prefix>!:` or a `BREAKING CHANGE:` footer → SemVer major bump.
 - Keep the repository clean before pushing to `main`; the workflow refuses dirty trees.
 - Configure repository secrets:
-  - `CRATES_IO_TOKEN` with publish permission (used by the `release-plz release` job for stable releases).
+  - `CARGO_REGISTRY_TOKEN` with publish permission (used by the `release-plz release` job for stable releases).
 
 ## Automated flow
 
@@ -24,7 +24,7 @@ Releases are automated with [release-plz](https://crates.io/crates/release-plz).
 5. The same workflow runs `release-plz release`, which:
    - Publishes updated crates to crates.io.
    - Tags the commit (`vX.Y.Z`).
-6. The tag triggers `.github/workflows/release.yml`, which builds the optimized Linux binary, bundles the tarball plus checksum, and publishes the GitHub release using the `CHANGELOG.md` entry for the tag.
+6. The tag triggers `.github/workflows/release.yml`, which builds the optimized Linux binaries (GNU + musl), bundles the tarballs plus checksums, and publishes the GitHub release with the changelog entry plus the full commit list (including PR links when available).
 
 > Trusted publishing is supported by deleting `CARGO_REGISTRY_TOKEN` and granting `id-token: write` to the `release` job if you prefer that model.
 
