@@ -50,10 +50,14 @@ jobs:
 
       - name: Build
         run: |
+          build_args=""
+          if [ "${{ matrix.target }}" = "x86_64-unknown-linux-musl" ]; then
+            build_args="--no-default-features"
+          fi
           if [ "${{ matrix.build }}" = "cross" ]; then
-            cross build --release --target "${{ matrix.target }}"
+            cross build --release --target "${{ matrix.target }}" ${build_args}
           else
-            cargo build --release --target "${{ matrix.target }}"
+            cargo build --release --target "${{ matrix.target }}" ${build_args}
           fi
 
       - name: Package artifacts

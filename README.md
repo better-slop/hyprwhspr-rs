@@ -22,6 +22,7 @@ https://github.com/user-attachments/assets/bbbaa1c3-1a7e-4165-ad3d-27b7465e201a
 - Parakeet TDT (optional) - NVIDIA's local ASR model via ONNX
   - Run `./scripts/download-parakeet-tdt.sh` to download model files (~1.2GB)
   - Very fast, but not as accurate as whisper or Gemini
+  - Not available on musl builds (use the GNU release)
 
 ## Features
 

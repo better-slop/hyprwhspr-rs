@@ -1,20 +1,23 @@
 mod audio;
 mod gemini;
 mod groq;
+#[cfg(feature = "parakeet")]
 mod parakeet;
 mod postprocess;
 mod prompt;
 
 use crate::config::{Config, ConfigManager, TranscriptionProvider};
-use crate::paths::expand_tilde;
 use crate::whisper::{WhisperManager, WhisperVadOptions};
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use std::env;
 use std::time::Duration;
+#[cfg(feature = "parakeet")]
+use crate::paths::expand_tilde;
 
 pub use audio::{encode_to_flac, EncodedAudio};
 pub use gemini::GeminiTranscriber;
 pub use groq::GroqTranscriber;
+#[cfg(feature = "parakeet")]
 pub use parakeet::ParakeetTranscriber;
 pub use postprocess::{clean_transcription, contains_only_non_speech_markers, is_prompt_artifact};
 pub use prompt::{PromptBlueprint, DEFAULT_PROMPT};
@@ -23,6 +26,7 @@ pub enum TranscriptionBackend {
     Whisper(WhisperManager),
     Groq(GroqTranscriber),
     Gemini(GeminiTranscriber),
+    #[cfg(feature = "parakeet")]
     Parakeet(ParakeetTranscriber),
 }
 
@@ -95,20 +99,27 @@ impl TranscriptionBackend {
                 Ok(Self::Gemini(provider))
             }
             TranscriptionProvider::Parakeet => {
-                let prompt = Self::prompt_for(config, TranscriptionProvider::Parakeet);
-                let par_cfg = &config.transcription.parakeet;
+                #[cfg(feature = "parakeet")]
+                {
+                    let prompt = Self::prompt_for(config, TranscriptionProvider::Parakeet);
+                    let par_cfg = &config.transcription.parakeet;
 
-                let expanded = expand_tilde(&par_cfg.model_dir);
-                let model_dir = if expanded.is_relative() {
-                    directories::ProjectDirs::from("", "", "hyprwhspr-rs")
-                        .map(|dirs| dirs.data_dir().join(&expanded))
-                        .unwrap_or(expanded)
-                } else {
-                    expanded
-                };
+                    let expanded = expand_tilde(&par_cfg.model_dir);
+                    let model_dir = if expanded.is_relative() {
+                        directories::ProjectDirs::from("", "", "hyprwhspr-rs")
+                            .map(|dirs| dirs.data_dir().join(&expanded))
+                            .unwrap_or(expanded)
+                    } else {
+                        expanded
+                    };
 
-                let provider = ParakeetTranscriber::new(par_cfg, model_dir, prompt)?;
-                Ok(Self::Parakeet(provider))
+                    let provider = ParakeetTranscriber::new(par_cfg, model_dir, prompt)?;
+                    Ok(Self::Parakeet(provider))
+                }
+                #[cfg(not(feature = "parakeet"))]
+                {
+                    bail!("Parakeet backend is disabled in this build. Rebuild with --features parakeet.")
+                }
             }
         }
     }
@@ -118,6 +129,7 @@ impl TranscriptionBackend {
             TranscriptionBackend::Whisper(manager) => manager.initialize(),
             TranscriptionBackend::Groq(provider) => provider.initialize(),
             TranscriptionBackend::Gemini(provider) => provider.initialize(),
+            #[cfg(feature = "parakeet")]
             TranscriptionBackend::Parakeet(provider) => provider.initialize(),
         }
     }
@@ -127,6 +139,7 @@ impl TranscriptionBackend {
             TranscriptionBackend::Whisper(_) => TranscriptionProvider::WhisperCpp,
             TranscriptionBackend::Groq(_) => TranscriptionProvider::Groq,
             TranscriptionBackend::Gemini(_) => TranscriptionProvider::Gemini,
+            #[cfg(feature = "parakeet")]
             TranscriptionBackend::Parakeet(_) => TranscriptionProvider::Parakeet,
         }
     }
@@ -167,6 +180,7 @@ impl TranscriptionBackend {
             TranscriptionBackend::Whisper(manager) => manager.transcribe(audio_data).await,
             TranscriptionBackend::Groq(provider) => provider.transcribe(audio_data).await,
             TranscriptionBackend::Gemini(provider) => provider.transcribe(audio_data).await,
+            #[cfg(feature = "parakeet")]
             TranscriptionBackend::Parakeet(provider) => provider.transcribe(audio_data).await,
         }
     }

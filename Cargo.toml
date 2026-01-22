@@ -46,7 +46,7 @@ wrtype = "0.1"
 whisper-rs = { version = "0.12", optional = true }
 
 # Parakeet TDT (NVIDIA ASR)
-parakeet-rs = "0.2.7"
+parakeet-rs = { version = "0.2.7", optional = true }
 
 # Logging
 tracing = "0.1"
@@ -67,7 +67,8 @@ time = { version = "0.3", features = ["formatting", "local-offset", "macros"] }
 comfy-table = { version = "7.2", default-features = true, features = ["tty"] }
 
 [features]
-default = []
+default = ["parakeet"]
+parakeet = ["parakeet-rs"]
 whisper-native = ["whisper-rs"]
 
 [profile.release]
