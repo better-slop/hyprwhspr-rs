@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.3.16] (https://github.com/better-slop/hyprwhspr-rs/compare/v0.3.15...v0.3.16) - 2026-01-26
+
+### Fixes
+- fix conditional bail import ([#74](https://github.com/better-slop/hyprwhspr-rs/pull/74))
+- fix order for config loading ([#73](https://github.com/better-slop/hyprwhspr-rs/pull/73))
+
 ## [0.3.15] (https://github.com/better-slop/hyprwhspr-rs/compare/v0.3.14...v0.3.15) - 2026-01-22
 
 ### Other
