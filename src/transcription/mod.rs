@@ -8,7 +8,9 @@ mod prompt;
 
 use crate::config::{Config, ConfigManager, TranscriptionProvider};
 use crate::whisper::{WhisperManager, WhisperVadOptions};
-use anyhow::{bail, Context, Result};
+#[cfg(not(feature = "parakeet"))]
+use anyhow::bail;
+use anyhow::{Context, Result};
 use std::env;
 use std::time::Duration;
 #[cfg(feature = "parakeet")]
