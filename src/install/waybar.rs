@@ -25,7 +25,7 @@ fn waybar_config_dir() -> PathBuf {
 
 fn find_waybar_config() -> Option<PathBuf> {
     let dir = waybar_config_dir();
-    for name in ["config.jsonc", "config.json", "config"] {
+    for name in ["config", "config.jsonc"] {
         let path = dir.join(name);
         if path.exists() {
             return Some(path);
