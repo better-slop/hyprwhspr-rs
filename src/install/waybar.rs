@@ -1,7 +1,7 @@
 use super::{backup_file, xdg_config_home};
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
+use jsonc_parser::{parse_to_serde_value, ParseOptions};
 use owo_colors::OwoColorize;
-use regex::Regex;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -67,15 +67,13 @@ fn install_module(_force: bool) -> Result<()> {
         backup_file(&config_path)?;
     }
 
-    // Clean JSONC to JSON for parsing
-    let json_clean = clean_jsonc(&content);
-
-    // Parse and modify
-    let mut config: serde_json::Value =
-        serde_json::from_str(&json_clean).context("Failed to parse waybar config as JSON")?;
+    // Parse JSONC config
+    let mut config: serde_json::Value = parse_jsonc(&content)
+        .context("Failed to parse waybar config as JSONC")?;
 
     // Parse module definition and add it
-    let module_def: serde_json::Value = serde_json::from_str(&clean_jsonc(WAYBAR_MODULE))?;
+    let module_def: serde_json::Value = parse_jsonc(WAYBAR_MODULE)
+        .context("Failed to parse hyprwhspr module definition")?;
     if let Some(def) = module_def.get("custom/hyprwhspr") {
         config["custom/hyprwhspr"] = def.clone();
     }
@@ -169,17 +167,9 @@ fn reload_waybar() -> Result<()> {
     Ok(())
 }
 
-/// Strip JSONC features (comments, trailing commas) to make valid JSON
-fn clean_jsonc(content: &str) -> String {
-    // Remove // comments (but not :// in URLs)
-    let re_line_comment = Regex::new(r"(?m)(?<!:)//.*$").unwrap();
-    let result = re_line_comment.replace_all(content, "");
-
-    // Remove /* */ comments
-    let re_block_comment = Regex::new(r"(?s)/\*.*?\*/").unwrap();
-    let result = re_block_comment.replace_all(&result, "");
-
-    // Remove trailing commas before ] or }
-    let re_trailing = Regex::new(r",(\s*[}\]])").unwrap();
-    re_trailing.replace_all(&result, "$1").to_string()
+/// Parse JSONC content (with comments and trailing commas) into a serde_json::Value
+fn parse_jsonc(content: &str) -> Result<serde_json::Value> {
+    parse_to_serde_value(content, &ParseOptions::default())
+        .map_err(|e| anyhow!("JSONC parse error: {}", e))?
+        .ok_or_else(|| anyhow!("JSONC content was empty"))
 }
