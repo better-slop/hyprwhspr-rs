@@ -7,14 +7,14 @@ mod postprocess;
 mod prompt;
 
 use crate::config::{Config, ConfigManager, TranscriptionProvider};
+#[cfg(feature = "parakeet")]
+use crate::paths::expand_tilde;
 use crate::whisper::{WhisperManager, WhisperVadOptions};
 #[cfg(not(feature = "parakeet"))]
 use anyhow::bail;
 use anyhow::{Context, Result};
 use std::env;
 use std::time::Duration;
-#[cfg(feature = "parakeet")]
-use crate::paths::expand_tilde;
 
 pub use audio::{encode_to_flac, EncodedAudio};
 pub use gemini::GeminiTranscriber;
@@ -63,7 +63,7 @@ impl TranscriptionBackend {
                 let whisper_binaries =
                     config_manager.get_whisper_binary_candidates(whisper_cfg.fallback_cli);
                 let manager = WhisperManager::new(
-                    config_manager.get_model_path(),
+                    config_manager.get_model_path()?,
                     whisper_binaries,
                     whisper_cfg.threads,
                     prompt,

@@ -739,7 +739,7 @@ impl ConfigManager {
         Ok(())
     }
 
-    pub fn get_model_path(&self) -> PathBuf {
+    pub fn get_model_path(&self) -> Result<PathBuf> {
         let config = self.get();
         Self::resolve_model_path(&config)
     }
@@ -828,23 +828,52 @@ impl ConfigManager {
         Some((modified, metadata.len()))
     }
 
-    fn resolve_model_path(config: &Config) -> PathBuf {
-        let models_dir = Self::model_search_dirs(config)
+    fn resolve_model_path(config: &Config) -> Result<PathBuf> {
+        let model_name = &config.transcription.whisper_cpp.model;
+        let search_dirs = Self::model_search_dirs(config);
+        let default_hint = default_models_dirs()
             .into_iter()
             .next()
-            .unwrap_or_else(|| PathBuf::from("."));
+            .unwrap_or_else(|| "~/.local/share/hyprwhspr-rs/models".to_string());
+        let download_hint = format!(
+            "No models found. Please download to {}:\nhttps://huggingface.co/ggerganov/whisper.cpp/tree/main",
+            default_hint
+        );
 
-        let model_name = &config.transcription.whisper_cpp.model;
-        if model_name.ends_with(".en") {
-            return models_dir.join(format!("ggml-{}.bin", model_name));
+        if search_dirs.is_empty() {
+            tracing::warn!("{}", download_hint);
+            return Err(anyhow!(download_hint));
         }
 
-        let en_path = models_dir.join(format!("ggml-{}.en.bin", model_name));
-        if en_path.exists() {
-            return en_path;
+        let candidates = if model_name.ends_with(".en") {
+            vec![format!("ggml-{}.bin", model_name)]
+        } else {
+            vec![
+                format!("ggml-{}.en.bin", model_name),
+                format!("ggml-{}.bin", model_name),
+            ]
+        };
+
+        for dir in &search_dirs {
+            for candidate in &candidates {
+                let path = dir.join(candidate);
+                if path.exists() {
+                    return Ok(path);
+                }
+            }
         }
 
-        models_dir.join(format!("ggml-{}.bin", model_name))
+        let searched = search_dirs
+            .iter()
+            .map(|dir| dir.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        tracing::warn!("{}", download_hint);
+        Err(anyhow!(
+            "Whisper model '{}' not found in: {}",
+            model_name,
+            searched
+        ))
     }
 
     fn resolve_vad_model_path(config: &Config, config_path: Option<&Path>) -> Option<PathBuf> {
@@ -900,7 +929,7 @@ impl ConfigManager {
                 continue;
             }
             let expanded = expand_tilde(trimmed);
-            if !dirs.contains(&expanded) {
+            if expanded.exists() && !dirs.contains(&expanded) {
                 dirs.push(expanded);
             }
         }
@@ -919,5 +948,41 @@ impl ConfigManager {
         }
 
         dirs
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Config, ConfigManager};
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn resolve_model_path_prefers_existing_dir() {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("hyprwhspr-test-{}-{}", std::process::id(), stamp));
+        let empty_dir = root.join("empty");
+        let populated_dir = root.join("populated");
+        fs::create_dir_all(&empty_dir).expect("empty dir");
+        fs::create_dir_all(&populated_dir).expect("populated dir");
+
+        let model_file = populated_dir.join("ggml-base.bin");
+        fs::write(&model_file, b"test").expect("write model");
+
+        let mut config = Config::default();
+        config.transcription.whisper_cpp.model = "base".to_string();
+        config.transcription.whisper_cpp.models_dirs = vec![
+            empty_dir.to_string_lossy().to_string(),
+            populated_dir.to_string_lossy().to_string(),
+        ];
+
+        let resolved = ConfigManager::resolve_model_path(&config).expect("model path");
+        assert_eq!(resolved, model_file);
+
+        fs::remove_dir_all(&root).expect("cleanup");
     }
 }

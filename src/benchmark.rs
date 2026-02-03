@@ -314,14 +314,14 @@ impl fmt::Display for BenchmarkSummary {
         }
 
         table.add_row(Row::from(vec![
-            Cell::new("Recording (start)"),
+            Cell::new("Rec. start"),
             ms_cell(Some(self.keybind_to_record_start_ms)),
             empty_cell(),
             empty_cell(),
         ]));
 
         table.add_row(Row::from(vec![
-            Cell::new("Recording (active)"),
+            Cell::new("Rec. active)"),
             ms_cell(self.recording_duration_ms),
             ms_cell(self.original_audio_ms),
             kb_cell(self.original_audio_kb),
