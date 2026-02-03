@@ -14,7 +14,6 @@ use tokio::sync::watch;
 use tokio::time;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(default)]
 pub struct ShortcutsConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hold: Option<String>,
@@ -531,7 +530,11 @@ impl Config {
             }
         } else if self.shortcuts.press.is_none() {
             if let Some(legacy) = &legacy_primary {
-                self.shortcuts.press = Some(legacy.clone());
+                let uses_default_primary = legacy == &default_primary;
+                let has_hold_only = self.shortcuts.hold.is_some();
+                if !(uses_default_primary && has_hold_only) {
+                    self.shortcuts.press = Some(legacy.clone());
+                }
             }
         }
 
