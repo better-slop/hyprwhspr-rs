@@ -128,6 +128,10 @@ fn default_model() -> String {
     "base".to_string()
 }
 
+fn default_models_dirs() -> Vec<String> {
+    vec!["~/.local/share/hyprwhspr-rs/models".to_string()]
+}
+
 fn default_threads() -> usize {
     4
 }
@@ -378,7 +382,7 @@ impl Default for WhisperCppConfig {
             gpu_layers: default_gpu_layers(),
             fallback_cli: false,
             no_speech_threshold: default_no_speech_threshold(),
-            models_dirs: Vec::new(),
+            models_dirs: default_models_dirs(),
             vad: VadConfig::default(),
         }
     }
@@ -891,8 +895,12 @@ impl ConfigManager {
 
         // Add custom models directories from config (with path expansion)
         for dir_str in &config.transcription.whisper_cpp.models_dirs {
-            let expanded = expand_tilde(dir_str);
-            if expanded.exists() {
+            let trimmed = dir_str.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let expanded = expand_tilde(trimmed);
+            if !dirs.contains(&expanded) {
                 dirs.push(expanded);
             }
         }

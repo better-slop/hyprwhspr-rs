@@ -82,7 +82,19 @@ impl WhisperManager {
 
     pub fn initialize(&self) -> Result<()> {
         if !self.model_path.exists() {
-            return Err(anyhow!("Whisper model not found at: {:?}", self.model_path));
+            let download_dir = self
+                .model_path
+                .parent()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "~/.local/share/hyprwhspr-rs/models".to_string());
+            warn!(
+                "No models found. Please download to {}:\nhttps://huggingface.co/ggerganov/whisper.cpp/tree/main",
+                download_dir
+            );
+            return Err(anyhow!(
+                "Whisper model not found at: {:?}\nDownload models from: https://huggingface.co/ggerganov/whisper.cpp/tree/main",
+                self.model_path
+            ));
         }
 
         let available_binary = self
