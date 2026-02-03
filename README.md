@@ -59,6 +59,23 @@ hyprwhspr-rs install
 hyprwhspr-rs install {--all| --service | --waybar | --elephant} {--force | -f}
 ```
 
+### Using Nix
+
+You can install the `hyprwhspr-rs` package from nixpkgs.
+
+With NixOS:
+```nix
+{
+  # required to listen for keyboard shortcuts
+  users.users.<username>.extraGroups = [ "input" ];
+  
+  # have it auto start as a systemd unit with
+  services.hyprwhspr-rs.enable = true; 
+  # or just add it to your systemPackages
+  environment.systemPackages = [ pkgs.hyprwhspr-rs ];
+}
+```
+
 ### From source
 
 1. `git clone https://github.com/better-slop/hyprwhispr-rs.git`
