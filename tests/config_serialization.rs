@@ -28,6 +28,16 @@ fn default_config_round_trips() {
 }
 
 #[test]
+fn default_config_includes_models_dir() {
+    let config = Config::default();
+
+    assert_eq!(
+        config.transcription.whisper_cpp.models_dirs,
+        vec!["~/.local/share/hyprwhspr-rs/models".to_string()]
+    );
+}
+
+#[test]
 fn hold_shortcut_only_disables_press_shortcut() {
     let json = r#"{"shortcuts":{"hold":"SUPER+R"}}"#;
     let mut config: Config = serde_json::from_str(json).expect("deserialize config");
