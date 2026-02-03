@@ -145,7 +145,7 @@ Installs systemd service, Waybar module, and CSS styles. Shows mic status in you
       "gpu_layers": 999, // Number of layers to keep on GPU (999 = auto/GPU preferred)
       "fallback_cli": false, // Fallback to whisper-cli (uses CPU)
       "no_speech_threshold": 0.6, // Whisper's "no speech" confidence gate
-      "models_dirs": ["~/.config/hyprwhspr-rs/models"], // Directories to search for models
+      "models_dirs": ["$XDG_DATA_HOME/hyprwhspr-rs/models"], // Directories to search for models
       "vad": {
         "enabled": false, // Toggle whisper-cli's native Silero VAD
         "model": "ggml-silero-v5.1.2.bin", // Path or filename for the ggml Silero VAD model

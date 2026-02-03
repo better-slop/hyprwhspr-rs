@@ -153,6 +153,13 @@ fn default_no_speech_threshold() -> f32 {
     0.60
 }
 
+fn default_whisper_models_dirs() -> Vec<String> {
+    let default_path = directories::ProjectDirs::from("", "", "hyprwhspr-rs")
+        .map(|dirs| dirs.data_dir().join("models"))
+        .unwrap_or_else(|| PathBuf::from("models"));
+    vec![default_path.to_string_lossy().to_string()]
+}
+
 fn default_vad_model() -> String {
     "ggml-silero-v5.1.2.bin".to_string()
 }
@@ -379,7 +386,7 @@ impl Default for WhisperCppConfig {
             gpu_layers: default_gpu_layers(),
             fallback_cli: false,
             no_speech_threshold: default_no_speech_threshold(),
-            models_dirs: Vec::new(),
+            models_dirs: default_whisper_models_dirs(),
             vad: VadConfig::default(),
         }
     }
@@ -814,22 +821,37 @@ impl ConfigManager {
     }
 
     fn resolve_model_path(config: &Config) -> PathBuf {
-        let models_dir = Self::model_search_dirs(config)
+        let search_dirs = Self::model_search_dirs(config);
+        let model_name = &config.transcription.whisper_cpp.model;
+        for models_dir in &search_dirs {
+            if model_name.ends_with(".en") {
+                let path = models_dir.join(format!("ggml-{}.bin", model_name));
+                if path.exists() {
+                    return path;
+                }
+                continue;
+            }
+
+            let en_path = models_dir.join(format!("ggml-{}.en.bin", model_name));
+            if en_path.exists() {
+                return en_path;
+            }
+
+            let path = models_dir.join(format!("ggml-{}.bin", model_name));
+            if path.exists() {
+                return path;
+            }
+        }
+
+        let fallback_dir = search_dirs
             .into_iter()
             .next()
             .unwrap_or_else(|| PathBuf::from("."));
-
-        let model_name = &config.transcription.whisper_cpp.model;
         if model_name.ends_with(".en") {
-            return models_dir.join(format!("ggml-{}.bin", model_name));
+            return fallback_dir.join(format!("ggml-{}.bin", model_name));
         }
 
-        let en_path = models_dir.join(format!("ggml-{}.en.bin", model_name));
-        if en_path.exists() {
-            return en_path;
-        }
-
-        models_dir.join(format!("ggml-{}.bin", model_name))
+        fallback_dir.join(format!("ggml-{}.bin", model_name))
     }
 
     fn resolve_vad_model_path(config: &Config, config_path: Option<&Path>) -> Option<PathBuf> {
@@ -881,7 +903,7 @@ impl ConfigManager {
         // Add custom models directories from config (with path expansion)
         for dir_str in &config.transcription.whisper_cpp.models_dirs {
             let expanded = expand_tilde(dir_str);
-            if expanded.exists() {
+            if !dirs.contains(&expanded) {
                 dirs.push(expanded);
             }
         }

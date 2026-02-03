@@ -82,7 +82,10 @@ impl WhisperManager {
 
     pub fn initialize(&self) -> Result<()> {
         if !self.model_path.exists() {
-            return Err(anyhow!("Whisper model not found at: {:?}", self.model_path));
+            return Err(anyhow!(
+                "Whisper model not found at: {:?}. Download models from: https://huggingface.co/ggerganov/whisper.cpp/tree/main",
+                self.model_path
+            ));
         }
 
         let available_binary = self
