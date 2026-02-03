@@ -38,7 +38,7 @@ https://github.com/user-attachments/assets/bbbaa1c3-1a7e-4165-ad3d-27b7465e201a
 - Detects Hyprland via `HYPRLAND_INSTANCE_SIGNATURE` and opens the IPC socket at `$XDG_RUNTIME_DIR/hypr/<signature>/.socket.sock`.
 - Execs `dispatch sendshortcut` commands against the active window to paste dictated text, inspecting `activewindow` to decide when `Shift` is required for a hardcoded list of programs.
 - Falls back to a Wayland virtual keyboard client or a simulated keypress paste if IPC communication fails.
-- **See the [example docs](https://github.com/better-slop/hyprwhspr-rs/tree/main/docs/examples) for additional integration paths outside of Waybar and Walker/Elephant.**# 
+- **See the [example docs](https://github.com/better-slop/hyprwhspr-rs/tree/main/docs/examples) for additional integration paths outside of Waybar and Walker/Elephant.**
 
 ## Installation
 
