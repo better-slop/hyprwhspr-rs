@@ -59,13 +59,13 @@ model_exists() {
     local model_path
     model_path=$(grep -oE '"model"\s*:\s*"[^"]+"' "$cfg" 2>/dev/null | cut -d\" -f4)
     [[ -n "$model_path" ]] || return 0  # use defaults; skip
-    
+
     # If it's a short name like "base.en", resolve to full path
     if [[ "$model_path" != /* ]]; then
         # Always use user data directory for models
-        model_path="${XDG_DATA_HOME:-$HOME/.local/share}/hyprwhspr-rs/whisper.cpp/models/ggml-${model_path}.bin"
+        model_path="$HOME/.local/share/hyprwhspr-rs/models/ggml-${model_path}.bin"
     fi
-    
+
     [[ -f "$model_path" ]] || return 1
 }
 
@@ -90,12 +90,12 @@ mic_recording_now() {
     if ! is_hyprwhspr-rs_running; then
         return 1
     fi
-    
+
     # Check if hyprwhspr-rs process is actually running
     if ! pgrep -f "hyprwhspr-rs" > /dev/null 2>&1; then
         return 1
     fi
-    
+
     # Check recording status file written by hyprwhspr-rs
     local status_file="$HOME/.config/hyprwhspr-rs/recording_status"
     if [[ -f "$status_file" ]]; then
@@ -111,13 +111,13 @@ mic_recording_now() {
         if ! mic_accessible; then
             return 1
         fi
-        
+
         # Check PipeWire state as fallback
         local def state
         def="$(try 'pactl get-default-source')"
         [[ -n "$def" ]] || def='@DEFAULT_SOURCE@'
         state="$(try "pactl list sources | grep -B 5 -A 5 \"Name: $def\" | grep 'State:' | awk '{print \$2}'")"
-        
+
         # Only consider RUNNING as recording (not SUSPENDED) to avoid false positives
         [[ "$state" == "RUNNING" ]]
     fi
@@ -166,7 +166,7 @@ is_hyprwhspr-rs_recording() {
     if ! is_hyprwhspr-rs_running; then
         return 1
     fi
-    
+
     # Use clean mic detection instead of heavy process scanning
     mic_recording_now
 }
@@ -178,7 +178,7 @@ show_notification() {
     local title="$1"
     local message="$2"
     local urgency="${3:-normal}"
-    
+
     if command -v notify-send &> /dev/null; then
         notify-send -i "$ICON_PATH" "$title" "$message" -u "$urgency"
     fi
@@ -222,14 +222,14 @@ check_service_health() {
     if is_hyprwhspr-rs_running; then
         # Check if service has been in "activating" state too long
         local service_status=$(systemctl --user show hyprwhspr-rs.service --property=ActiveState --value)
-        
+
         if [ "$service_status" = "activating" ]; then
             # Service is stuck starting, restart it
             echo "Service stuck in activating state, restarting..."
             systemctl --user restart hyprwhspr-rs.service
             return 1
         fi
-        
+
         # Check if recording state is stuck (running but no actual audio)
         if is_hyprwhspr-rs_running && ! is_hyprwhspr-rs_recording; then
             # Service is running but not recording - this is normal
@@ -243,7 +243,7 @@ check_service_health() {
 emit_json() {
     local state="$1" reason="${2:-}" custom_tooltip="${3:-}"
     local icon text tooltip class="$state"
-    
+
     case "$state" in
         "recording")
             icon="󰍬"
@@ -269,12 +269,12 @@ emit_json() {
             state="error"
             ;;
     esac
-    
+
     # Add mic status to tooltip if provided
     if [[ -n "$custom_tooltip" ]]; then
         tooltip="$tooltip\n$custom_tooltip"
     fi
-    
+
     # Output JSON for waybar
     printf '{"text":"%s","class":"%s","tooltip":"%s"}\n' "$text" "$class" "$tooltip"
 }
@@ -282,10 +282,10 @@ emit_json() {
 # Function to get current state with detailed error reasons
 get_current_state() {
     local reason=""
-    
+
     # Check service health first
     check_service_health
-    
+
     # Check if service is running
     if ! systemctl --user is-active --quiet hyprwhspr-rs.service; then
         # Distinguish failed from inactive
@@ -299,27 +299,27 @@ get_current_state() {
         fi
         echo "error:$reason"; return
     fi
-    
+
     # Service is running - check if recording
     if is_hyprwhspr-rs_recording; then
         echo "recording"; return
     fi
-    
+
     # Service running but not recording - check dependencies
     if ! is_ydotoold_running; then
         echo "error:ydotoold"; return
     fi
-    
+
     # Check PipeWire health
     if ! is_pipewire_ok; then
         echo "error:pipewire_down"; return
     fi
-    
+
     # Check model existence
     if ! model_exists; then
         echo "error:model_missing"; return
     fi
-    
+
     echo "ready"
 }
 
