@@ -14,7 +14,6 @@ use tokio::sync::watch;
 use tokio::time;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(default)]
 pub struct ShortcutsConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hold: Option<String>,
@@ -506,6 +505,7 @@ impl Default for Config {
 
 impl Config {
     pub fn normalize_shortcuts(&mut self) {
+        let default_primary = default_primary_shortcut();
         let legacy_primary = Self::sanitize_shortcut(&self.primary_shortcut);
 
         self.shortcuts.press = self
@@ -521,20 +521,31 @@ impl Config {
 
         if let (Some(current), Some(legacy)) = (&self.shortcuts.press, &legacy_primary) {
             if current != legacy {
-                self.shortcuts.press = Some(legacy.clone());
+                // self.shortcuts.press = Some(legacy.clone());
+                let uses_default_primary = legacy == &default_primary;
+                let has_hold_only = self.shortcuts.hold.is_some();
+                if !(uses_default_primary && has_hold_only) {
+                    self.shortcuts.press = Some(legacy.clone());
+                }
             }
         } else if self.shortcuts.press.is_none() {
             if let Some(legacy) = &legacy_primary {
-                self.shortcuts.press = Some(legacy.clone());
+                let uses_default_primary = legacy == &default_primary;
+                let has_hold_only = self.shortcuts.hold.is_some();
+                if !(uses_default_primary && has_hold_only) {
+                    self.shortcuts.press = Some(legacy.clone());
+                }
             }
         }
 
         if let Some(press) = self.shortcuts.press.clone() {
             self.primary_shortcut = press;
         } else {
-            let fallback = legacy_primary.unwrap_or_else(default_primary_shortcut);
-            self.primary_shortcut = fallback.clone();
-            self.shortcuts.press = Some(fallback);
+            // let fallback = legacy_primary.unwrap_or_else(default_primary_shortcut);
+            // self.primary_shortcut = fallback.clone();
+            // self.shortcuts.press = Some(fallback);
+            let fallback = legacy_primary.unwrap_or(default_primary);
+            self.primary_shortcut = fallback;
         }
     }
 
@@ -892,7 +903,8 @@ impl ConfigManager {
             dirs.push(system_models);
         }
         if let Ok(home) = env::var("HOME") {
-            let legacy_path = PathBuf::from(home).join(".local/share/hyprwhspr-rs/whisper.cpp/models");
+            let legacy_path =
+                PathBuf::from(home).join(".local/share/hyprwhspr-rs/whisper.cpp/models");
             if legacy_path.exists() {
                 dirs.push(legacy_path);
             }

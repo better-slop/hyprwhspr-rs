@@ -5,9 +5,8 @@ use std::io;
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::{
-    mpsc as std_mpsc,
     atomic::{AtomicBool, Ordering},
-    Arc,
+    mpsc as std_mpsc, Arc,
 };
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
@@ -264,8 +263,7 @@ impl GlobalShortcuts {
                 combination_active = false;
             }
 
-            if fallback_rescan_enabled
-                && last_fallback_rescan.elapsed() >= fallback_rescan_interval
+            if fallback_rescan_enabled && last_fallback_rescan.elapsed() >= fallback_rescan_interval
             {
                 last_fallback_rescan = Instant::now();
                 pressed_keys.clear();
@@ -435,7 +433,10 @@ impl GlobalShortcuts {
                 updated
             );
         } else {
-            debug!("Keyboard devices refreshed - monitoring {} device(s)", updated);
+            debug!(
+                "Keyboard devices refreshed - monitoring {} device(s)",
+                updated
+            );
         }
 
         self.devices = devices;
@@ -516,9 +517,7 @@ impl GlobalShortcuts {
         tx: std_mpsc::Sender<InputDeviceEvent>,
         stop: Arc<AtomicBool>,
     ) -> Result<()> {
-        let monitor = MonitorBuilder::new()?
-            .match_subsystem("input")?
-            .listen()?;
+        let monitor = MonitorBuilder::new()?.match_subsystem("input")?.listen()?;
 
         loop {
             if stop.load(Ordering::Relaxed) {

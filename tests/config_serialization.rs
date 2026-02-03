@@ -26,3 +26,23 @@ fn default_config_round_trips() {
     let decoded: Config = serde_json::from_str(&json).expect("deserialize config");
     assert_eq!(decoded, config);
 }
+
+#[test]
+fn hold_shortcut_only_disables_press_shortcut() {
+    let json = r#"{"shortcuts":{"hold":"SUPER+R"}}"#;
+    let mut config: Config = serde_json::from_str(json).expect("deserialize config");
+    config.normalize_shortcuts();
+
+    assert_eq!(config.shortcuts.hold.as_deref(), Some("SUPER+R"));
+    assert_eq!(config.shortcuts.press, None);
+}
+
+#[test]
+fn legacy_primary_shortcut_populates_press_even_with_hold() {
+    let json = r#"{"primary_shortcut":"SUPER+SHIFT+R","shortcuts":{"hold":"SUPER+R"}}"#;
+    let mut config: Config = serde_json::from_str(json).expect("deserialize config");
+    config.normalize_shortcuts();
+
+    assert_eq!(config.shortcuts.hold.as_deref(), Some("SUPER+R"));
+    assert_eq!(config.shortcuts.press.as_deref(), Some("SUPER+SHIFT+R"));
+}
