@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.3.17] (https://github.com/better-slop/hyprwhspr-rs/compare/v0.3.16...v0.3.17) - 2026-02-03
+
+### Features
+- warn log/info on missing model & hardcode default models dir ([#88](https://github.com/better-slop/hyprwhspr-rs/pull/88))
+
+
+### Fixes
+- model load order ([#89](https://github.com/better-slop/hyprwhspr-rs/pull/89))
+- shortcut is bound to keybind + `alt` key when alt is omitted ([#86](https://github.com/better-slop/hyprwhspr-rs/pull/86))
+
 ## [0.3.16] (https://github.com/better-slop/hyprwhspr-rs/compare/v0.3.15...v0.3.16) - 2026-01-26
 
 ### Fixes
