@@ -523,8 +523,10 @@ impl Config {
             .and_then(|value| Self::sanitize_shortcut(value));
 
         // Check if we have a non-default legacy primary_shortcut that needs migration
-        let has_legacy_primary = legacy_primary.is_some() 
-            && legacy_primary.as_deref() != Some(&default_primary_shortcut());
+        let has_legacy_primary = matches!(
+            legacy_primary.as_deref(), 
+            Some(s) if s != default_primary_shortcut()
+        );
 
         // Only migrate from legacy primary_shortcut if:
         // 1. There's a legacy primary shortcut AND
@@ -536,11 +538,14 @@ impl Config {
             }
         }
 
-        // Update primary_shortcut to match the actual press shortcut (or empty if none)
+        // Update primary_shortcut to match the actual press shortcut
         if let Some(press) = &self.shortcuts.press {
             self.primary_shortcut = press.clone();
         } else {
-            // No press shortcut - set primary_shortcut to empty
+            // No press shortcut - set primary_shortcut to empty string
+            // This field is legacy (marked skip_serializing) and only used for backward
+            // compatibility during config migration. Setting it to empty when there's no
+            // press shortcut maintains consistency with the new shortcuts structure.
             self.primary_shortcut = String::new();
         }
     }
