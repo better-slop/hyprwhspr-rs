@@ -7,15 +7,16 @@ Hyprwhspr-rs currently ships with three main integrations: a [Hyprland](https://
 **Status Indicator**
 
 - `${XDG_CACHE_HOME}/hyprwhspr-rs/status.json` (fallback: `/tmp/hyprwhspr-rs/status.json`)
-
-  Hyprwhspr-rs streams the active status to this json file.
   
   ```jsonc
   {
-    "text": "󰍭",              // Display text (usually an icon)
-    "tooltip": "Not running", // Tooltip string (examples: "Ready", "Recording...", "Transcribing...", "Not running", "Error: <message>")
+    // Atomic write: status.json.tmp -> status.json (inotify-friendly).
+    // is_recording() => class == "active"
+    // shutdown final write: class=inactive, tooltip="Not running"
+    "text": "󰍭",              // inactive/error = 󰍭, active/processing = 󰍬
+    "tooltip": "Not running", // "Ready" | "Recording..." | "Transcribing..." | "Not running" | "Error: <message>"
     "class": "inactive",      // inactive | active | processing | error
-    "alt": "inactive"         // Mirrors class (for bar alt text)
+    "alt": "inactive"         // Mirrors class
   }
   ```
 
@@ -23,15 +24,18 @@ Hyprwhspr-rs currently ships with three main integrations: a [Hyprland](https://
 
 - `${XDG_DATA_HOME}/hyprwhspr-rs/transcriptions.json` (fallback: `/tmp/hyprwhspr-rs/transcriptions.json`)
 
-  ```json
+  ```jsonc
   [
+    // JSON array, newest first.
+    // Max entries: 20 (older truncated).
+    // Timestamp: "YYYY-MM-DD HH:MM" (local time; UTC fallback).
     {
-      "text": "Use NixOS for declarative, reproducible, and reliable system configuration.",
-      "timestamp": "2026-02-03 14:22"
+      "text": "Use NixOS for declarative, reproducible, and reliable system configuration.", // transcription text
+      "timestamp": "2026-02-03 14:22" // local timestamp
     },
     {
-      "text": "Use the same data in QuickShell.",
-      "timestamp": "2026-02-03 14:21"
+      "text": "Use the same data in QuickShell.", // transcription text
+      "timestamp": "2026-02-03 14:21" // local timestamp
     }
   ]
   ```
