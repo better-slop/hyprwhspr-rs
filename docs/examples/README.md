@@ -13,7 +13,7 @@ Hyprwhspr-rs currently ships with three main integrations: a [Hyprland](https://
   ```jsonc
   {
     "text": "󰍭",              // Display text (usually an icon)
-    "tooltip": "Not running", // Tooltip string
+    "tooltip": "Not running", // Tooltip string (examples: "Ready", "Recording...", "Transcribing...", "Not running", "Error: <message>")
     "class": "inactive",      // inactive | active | processing | error
     "alt": "inactive"         // Mirrors class (for bar alt text)
   }
