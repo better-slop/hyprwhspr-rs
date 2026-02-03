@@ -27,7 +27,7 @@ impl Default for ShortcutsConfig {
     fn default() -> Self {
         Self {
             hold: None,
-            press: Some(default_primary_shortcut()),
+            press: None,
         }
     }
 }
@@ -476,7 +476,10 @@ impl Default for Config {
     fn default() -> Self {
         let mut config = Self {
             primary_shortcut: default_primary_shortcut(),
-            shortcuts: ShortcutsConfig::default(),
+            shortcuts: ShortcutsConfig {
+                hold: None,
+                press: Some(default_primary_shortcut()),
+            },
             word_overrides: HashMap::new(),
             audio_feedback: false,
             start_sound_volume: default_volume(),
@@ -519,22 +522,26 @@ impl Config {
             .as_ref()
             .and_then(|value| Self::sanitize_shortcut(value));
 
-        if let (Some(current), Some(legacy)) = (&self.shortcuts.press, &legacy_primary) {
-            if current != legacy {
-                self.shortcuts.press = Some(legacy.clone());
-            }
-        } else if self.shortcuts.press.is_none() {
+        // Check if we have a non-default legacy primary_shortcut that needs migration
+        let has_legacy_primary = legacy_primary.is_some() 
+            && legacy_primary.as_deref() != Some(&default_primary_shortcut());
+
+        // Only migrate from legacy primary_shortcut if:
+        // 1. There's a legacy primary shortcut AND
+        // 2. It's different from the default AND
+        // 3. No press shortcut is already set
+        if has_legacy_primary && self.shortcuts.press.is_none() {
             if let Some(legacy) = &legacy_primary {
                 self.shortcuts.press = Some(legacy.clone());
             }
         }
 
-        if let Some(press) = self.shortcuts.press.clone() {
-            self.primary_shortcut = press;
+        // Update primary_shortcut to match the actual press shortcut (or empty if none)
+        if let Some(press) = &self.shortcuts.press {
+            self.primary_shortcut = press.clone();
         } else {
-            let fallback = legacy_primary.unwrap_or_else(default_primary_shortcut);
-            self.primary_shortcut = fallback.clone();
-            self.shortcuts.press = Some(fallback);
+            // No press shortcut - set primary_shortcut to empty
+            self.primary_shortcut = String::new();
         }
     }
 
