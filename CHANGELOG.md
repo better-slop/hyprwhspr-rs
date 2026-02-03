@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.3.18] (https://github.com/better-slop/hyprwhspr-rs/compare/v0.3.17...v0.3.18) - 2026-02-03
+
+### Chores
+- *(docs)* update integration examples & adds contributing.md ([#90](https://github.com/better-slop/hyprwhspr-rs/pull/90))
+
 ## [0.3.17] (https://github.com/better-slop/hyprwhspr-rs/compare/v0.3.16...v0.3.17) - 2026-02-03
 
 ### Features
