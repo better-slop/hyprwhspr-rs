@@ -69,6 +69,10 @@ With NixOS:
   # required to listen for keyboard shortcuts
   users.users.<username>.extraGroups = [ "input" ];
   
+  # optional: enable cuda/rocm acceleration
+  nixpkgs.config.cudaSupport = true;
+  nixpkgs.config.rocmSupport = true;
+  
   # have it auto start as a systemd unit with
   services.hyprwhspr-rs.enable = true; 
   # or just add it to your systemPackages
