@@ -63,7 +63,7 @@ hyprwhspr-rs install {--all| --service | --waybar | --elephant} {--force | -f}
 
 Notes:
 
-- The user systemd unit uses `ExecStart=hyprwhspr-rs` (expects the binary to be on `PATH`). If you installed via `cargo install`, make sure `~/.cargo/bin` is available to systemd user services (or add it via a drop-in override).
+- The installer writes the systemd unit with an absolute `ExecStart=` pointing at the `hyprwhspr-rs` binary you ran `hyprwhspr-rs install` with. If you copy the unit template manually, ensure `hyprwhspr-rs` is resolvable by systemd (PATH / drop-in override).
 - If audio start/stop sounds are missing in your packaging setup, you can point the app at an installed assets directory with `HYPRWHSPR_ASSETS_DIR=/path/to/assets`.
 
 ### From source
