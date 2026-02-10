@@ -58,13 +58,13 @@ https://github.com/user-attachments/assets/bbbaa1c3-1a7e-4165-ad3d-27b7465e201a
 
 2. Install systemd service and Waybar module (optionally, with a WIP elephant/walker menu using `--with-elephant` flag)
 
-```bash
-# Interactive install
-hyprwhspr-rs install
+    ```bash
+    # Interactive install
+    hyprwhspr-rs install
 
-# Optionally, install specific components (systemd, waybar, elephant)
-hyprwhspr-rs install {--all| --service | --waybar | --elephant} {--force | -f}
-```
+    # Optionally, install specific components (systemd, waybar, elephant)
+    hyprwhspr-rs install {--all| --service | --waybar | --elephant} {--force | -f}
+    ```
 
 Notes:
 
