@@ -14,8 +14,12 @@ Description = "Recent voice transcriptions"
 
 function GetEntries()
     local entries = {}
-    local home = os.getenv("HOME")
-    local file_path = home .. "/.local/share/hyprwhspr-rs/transcriptions.json"
+    local home = os.getenv("HOME") or ""
+    local data_home = os.getenv("XDG_DATA_HOME")
+    if not data_home or data_home == "" then
+        data_home = home .. "/.local/share"
+    end
+    local file_path = data_home .. "/hyprwhspr-rs/transcriptions.json"
 
     local file = io.open(file_path, "r")
     if not file then

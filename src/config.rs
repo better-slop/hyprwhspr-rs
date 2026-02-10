@@ -749,33 +749,7 @@ impl ConfigManager {
     }
 
     pub fn get_whisper_binary_candidates(&self, include_fallbacks: bool) -> Vec<PathBuf> {
-        let home = env::var("HOME").expect("HOME not set");
-        let local_dir = PathBuf::from(&home).join(".local/share/hyprwhspr-rs/whisper.cpp");
-        let build_bin = local_dir.join("build/bin");
-
-        let mut candidates = Vec::new();
-        let push_candidate = |path: PathBuf, list: &mut Vec<PathBuf>| {
-            if path.exists() && !list.contains(&path) {
-                list.push(path);
-            }
-        };
-
-        // Prefer the managed local build if available
-        push_candidate(build_bin.join("whisper-cli"), &mut candidates);
-        push_candidate(local_dir.join("whisper-cli"), &mut candidates);
-
-        // System-installed whisper-cli (e.g., from packages)
-        push_candidate(PathBuf::from("/usr/bin/whisper-cli"), &mut candidates);
-
-        if include_fallbacks {
-            push_candidate(build_bin.join("main"), &mut candidates);
-            push_candidate(build_bin.join("whisper"), &mut candidates);
-            push_candidate(local_dir.join("main"), &mut candidates);
-            push_candidate(local_dir.join("whisper"), &mut candidates);
-            push_candidate(PathBuf::from("/usr/bin/whisper"), &mut candidates);
-        }
-
-        candidates
+        Self::discover_whisper_binary_candidates(include_fallbacks)
     }
 
     pub fn get_temp_dir(&self) -> PathBuf {
@@ -790,12 +764,113 @@ impl ConfigManager {
     }
 
     pub fn get_assets_dir(&self) -> PathBuf {
-        let install_path = PathBuf::from("/usr/lib/hyprwhspr-rs/share/assets");
-        if install_path.exists() {
-            return install_path;
+        Self::discover_assets_dir()
+    }
+
+    fn discover_whisper_binary_candidates(include_fallbacks: bool) -> Vec<PathBuf> {
+        let mut candidates = Vec::new();
+        let mut push_candidate = |path: PathBuf| {
+            if path.exists() && !candidates.contains(&path) {
+                candidates.push(path);
+            }
+        };
+
+        // Prefer the managed local build if available (XDG-aware)
+        if let Some(project_dirs) = directories::ProjectDirs::from("", "", "hyprwhspr-rs") {
+            let local_dir = project_dirs.data_dir().join("whisper.cpp");
+            let build_bin = local_dir.join("build/bin");
+
+            push_candidate(build_bin.join("whisper-cli"));
+            push_candidate(local_dir.join("whisper-cli"));
+            if include_fallbacks {
+                push_candidate(build_bin.join("main"));
+                push_candidate(build_bin.join("whisper"));
+                push_candidate(local_dir.join("main"));
+                push_candidate(local_dir.join("whisper"));
+            }
         }
 
-        PathBuf::from("assets")
+        // Compatibility: legacy managed build under $HOME
+        if let Ok(home) = env::var("HOME") {
+            let local_dir = PathBuf::from(home).join(".local/share/hyprwhspr-rs/whisper.cpp");
+            let build_bin = local_dir.join("build/bin");
+
+            push_candidate(build_bin.join("whisper-cli"));
+            push_candidate(local_dir.join("whisper-cli"));
+            if include_fallbacks {
+                push_candidate(build_bin.join("main"));
+                push_candidate(build_bin.join("whisper"));
+                push_candidate(local_dir.join("main"));
+                push_candidate(local_dir.join("whisper"));
+            }
+        }
+
+        // Prefer PATH discovery for system-installed binaries (covers /usr/bin, nix profiles, etc.)
+        for path in Self::find_binaries_on_path(&["whisper-cli"]) {
+            push_candidate(path);
+        }
+        if include_fallbacks {
+            for path in Self::find_binaries_on_path(&["whisper", "main"]) {
+                push_candidate(path);
+            }
+        }
+
+        candidates
+    }
+
+    fn find_binaries_on_path(names: &[&str]) -> Vec<PathBuf> {
+        let Some(path_os) = env::var_os("PATH") else {
+            return Vec::new();
+        };
+
+        let mut out = Vec::new();
+        for dir in env::split_paths(&path_os) {
+            for name in names {
+                let candidate = dir.join(name);
+                if candidate.exists() && !out.contains(&candidate) {
+                    out.push(candidate);
+                }
+            }
+        }
+        out
+    }
+
+    fn discover_assets_dir() -> PathBuf {
+        if let Ok(dir) = env::var("HYPRWHSPR_ASSETS_DIR") {
+            let path = PathBuf::from(dir);
+            if path.is_dir() {
+                return path;
+            }
+        }
+
+        if let Ok(exe_path) = env::current_exe() {
+            if let Some(prefix) = exe_path.parent().and_then(|p| p.parent()) {
+                let candidate = prefix.join("share/hyprwhspr-rs/assets");
+                if candidate.is_dir() {
+                    return candidate;
+                }
+
+                // Compatibility with packagers that install assets directly under share/assets
+                let candidate = prefix.join("share/assets");
+                if candidate.is_dir() {
+                    return candidate;
+                }
+            }
+        }
+
+        if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
+            let candidate = PathBuf::from(manifest_dir).join("assets");
+            if candidate.is_dir() {
+                return candidate;
+            }
+        }
+
+        let candidate = PathBuf::from("assets");
+        if candidate.is_dir() {
+            return candidate;
+        }
+
+        candidate
     }
 
     fn read_config_from_disk(path: &Path) -> Result<Config> {
@@ -955,7 +1030,10 @@ impl ConfigManager {
 mod tests {
     use super::{Config, ConfigManager};
     use std::fs;
+    use std::sync::Mutex;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn resolve_model_path_prefers_existing_dir() {
@@ -983,6 +1061,65 @@ mod tests {
         let resolved = ConfigManager::resolve_model_path(&config).expect("model path");
         assert_eq!(resolved, model_file);
 
+        fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn whisper_binary_candidates_include_path_binaries() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "hyprwhspr-path-test-{}-{}",
+            std::process::id(),
+            stamp
+        ));
+        fs::create_dir_all(&root).expect("tmp dir");
+
+        let fake = root.join("whisper-cli");
+        fs::write(&fake, b"#!/bin/sh\necho hi\n").expect("write fake");
+
+        let old_path = std::env::var_os("PATH");
+        std::env::set_var("PATH", root.as_os_str());
+        let candidates = ConfigManager::discover_whisper_binary_candidates(false);
+
+        match old_path {
+            Some(v) => std::env::set_var("PATH", v),
+            None => std::env::remove_var("PATH"),
+        }
+
+        assert!(candidates.contains(&fake));
+        fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn assets_dir_can_be_overridden_by_env() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "hyprwhspr-assets-test-{}-{}",
+            std::process::id(),
+            stamp
+        ));
+        fs::create_dir_all(&root).expect("tmp dir");
+
+        let old = std::env::var_os("HYPRWHSPR_ASSETS_DIR");
+        std::env::set_var("HYPRWHSPR_ASSETS_DIR", root.as_os_str());
+        let discovered = ConfigManager::discover_assets_dir();
+
+        match old {
+            Some(v) => std::env::set_var("HYPRWHSPR_ASSETS_DIR", v),
+            None => std::env::remove_var("HYPRWHSPR_ASSETS_DIR"),
+        }
+
+        assert_eq!(discovered, root);
         fs::remove_dir_all(&root).expect("cleanup");
     }
 }

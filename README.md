@@ -15,6 +15,7 @@ https://github.com/user-attachments/assets/bbbaa1c3-1a7e-4165-ad3d-27b7465e201a
 ## Requirements
 
 - whisper.cpp ([GitHub](https://github.com/ggml-org/whisper.cpp), [AUR](https://aur.archlinux.org/packages/whisper.cpp))
+  - Ensure `whisper-cli` is available on your `PATH` (or use the managed build locations).
 - libudev + pkg-config (required for hotplug detection; `libudev-dev` on Debian/Ubuntu)
 - GNU-only binaries (no musl releases)
 - Groq or Gemini API key (optional)
@@ -59,6 +60,11 @@ hyprwhspr-rs install
 # Optionally, install specific components (systemd, waybar, elephant)
 hyprwhspr-rs install {--all| --service | --waybar | --elephant} {--force | -f}
 ```
+
+Notes:
+
+- The user systemd unit uses `ExecStart=hyprwhspr-rs` (expects the binary to be on `PATH`). If you installed via `cargo install`, make sure `~/.cargo/bin` is available to systemd user services (or add it via a drop-in override).
+- If audio start/stop sounds are missing in your packaging setup, you can point the app at an installed assets directory with `HYPRWHSPR_ASSETS_DIR=/path/to/assets`.
 
 ### From source
 

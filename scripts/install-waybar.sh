@@ -262,7 +262,7 @@ except json.JSONDecodeError as e:
 
 # Always add/update the module definition
 config["custom/hyprwhspr"] = {
-    "exec": "cat ~/.cache/hyprwhspr-rs/status.json 2>/dev/null || echo '{\"text\":\"󰍭\",\"class\":\"inactive\",\"tooltip\":\"Not running\"}'",
+    "exec": "cat ${XDG_CACHE_HOME:-$HOME/.cache}/hyprwhspr-rs/status.json 2>/dev/null || echo '{\"text\":\"󰍭\",\"class\":\"inactive\",\"tooltip\":\"Not running\"}'",
     "return-type": "json",
     "format": "{text}",
     "interval": 1,
