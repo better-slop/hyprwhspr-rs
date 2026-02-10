@@ -12,7 +12,7 @@ permissions:
 jobs:
   release:
     name: release
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     if: ${{ github.repository_owner == 'better-slop' }}
     steps:
       - name: Checkout repository
@@ -42,7 +42,7 @@ jobs:
 
   release-pr:
     name: release-pr
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     needs: release
     if: ${{ github.repository_owner == 'better-slop' }}
     concurrency:
