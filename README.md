@@ -47,9 +47,14 @@ https://github.com/user-attachments/assets/bbbaa1c3-1a7e-4165-ad3d-27b7465e201a
 
 1. Install the latest release from [crates.io](https://crates.io/crates/hyprwhspr-rs)
 
-```
-cargo install hyprwhspr-rs
-```
+    ```bash
+    cargo install hyprwhspr-rs
+    ```
+    
+    Omit `parakeet` backend:
+    ```bash
+    cargo install hyprwhspr-rs --no-default-features
+    ```
 
 2. Install systemd service and Waybar module (optionally, with a WIP elephant/walker menu using `--with-elephant` flag)
 
