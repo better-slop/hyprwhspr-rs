@@ -855,6 +855,12 @@ impl ConfigManager {
                 if candidate.is_dir() {
                     return candidate;
                 }
+
+                // Legacy compatibility: historical /usr/lib/hyprwhspr-rs/share/assets layout
+                let candidate = prefix.join("lib/hyprwhspr-rs/share/assets");
+                if candidate.is_dir() {
+                    return candidate;
+                }
             }
         }
 

@@ -18,7 +18,8 @@ fn waybar_module_uses_xdg_cache_home() {
 #[test]
 fn waybar_install_script_injects_xdg_cache_home() {
     assert!(
-        WAYBAR_INSTALL_SCRIPT.contains("${XDG_CACHE_HOME:-$HOME/.cache}/hyprwhspr-rs/status.json"),
+        WAYBAR_INSTALL_SCRIPT
+            .contains("\\${XDG_CACHE_HOME:-\\$HOME/.cache}/hyprwhspr-rs/status.json"),
         "install script should inject XDG_CACHE_HOME fallback"
     );
     assert!(
