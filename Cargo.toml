@@ -11,8 +11,7 @@ documentation = "https://github.com/better-slop/hyprwhspr-rs#readme"
 
 [dependencies]
 # Async runtime
-tokio = { version = "1", features = ["full"] }
-futures = "0.3"
+tokio = { version = "1", features = ["io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 
 # Config & serialization
 serde = { version = "1", features = ["derive"] }
@@ -26,7 +25,6 @@ base64 = "0.21"
 
 # Error handling
 anyhow = "1"
-thiserror = "1"
 
 # Audio
 cpal = "0.15"
@@ -41,9 +39,6 @@ enigo = { version = "0.2", default-features = false, features = ["wayland"] }
 libc = "0.2"
 wl-clipboard-rs = "0.9"
 wrtype = "0.1"
-
-# Whisper (we'll try whisper-rs, but have subprocess fallback)
-whisper-rs = { version = "0.12", optional = true }
 
 # Parakeet TDT (NVIDIA ASR)
 parakeet-rs = { version = "0.2.7", optional = true }
@@ -69,7 +64,6 @@ comfy-table = { version = "7.2", default-features = true, features = ["tty"] }
 [features]
 default = ["parakeet"]
 parakeet = ["parakeet-rs"]
-whisper-native = ["whisper-rs"]
 
 [profile.release]
 opt-level = 3

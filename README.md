@@ -86,6 +86,7 @@ Installs systemd service, Waybar module, and CSS styles. Shows mic status in you
 1. `git clone https://github.com/better-slop/hyprwhispr-rs.git`
 2. `cd hyprwhspr-rs`
 3. `cargo build --release`
+   - Faster build (skips Parakeet backend): `cargo build --release --no-default-features`
 4. Run using:
    - pretty logs: `RUST_LOG=debug ./target/release/hyprwhspr-rs`
    - production release: `./target/release/hyprwhspr-rs`
