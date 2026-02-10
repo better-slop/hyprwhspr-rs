@@ -5,8 +5,8 @@ Wants=pipewire.service
 
 [Service]
 Type=simple
-ExecStartPre=/bin/sh -c 'mkdir -p %h/.cache/hyprwhspr-rs'
-ExecStart=%h/.cargo/bin/hyprwhspr-rs
+CacheDirectory=hyprwhspr-rs
+ExecStart=hyprwhspr-rs
 Restart=on-failure
 RestartSec=3
 Environment=RUST_LOG=info
