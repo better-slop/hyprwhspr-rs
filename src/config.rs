@@ -1096,6 +1096,39 @@ mod tests {
     }
 
     #[test]
+    fn whisper_binary_candidates_include_xdg_managed_build() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "hyprwhspr-xdg-data-test-{}-{}",
+            std::process::id(),
+            stamp
+        ));
+        fs::create_dir_all(&root).expect("tmp dir");
+
+        let managed_dir = root.join("hyprwhspr-rs/whisper.cpp/build/bin");
+        fs::create_dir_all(&managed_dir).expect("managed dir");
+        let fake = managed_dir.join("whisper-cli");
+        fs::write(&fake, b"fake").expect("write fake");
+
+        let old_xdg = std::env::var_os("XDG_DATA_HOME");
+        std::env::set_var("XDG_DATA_HOME", root.as_os_str());
+        let candidates = ConfigManager::discover_whisper_binary_candidates(false);
+
+        match old_xdg {
+            Some(v) => std::env::set_var("XDG_DATA_HOME", v),
+            None => std::env::remove_var("XDG_DATA_HOME"),
+        }
+
+        assert!(candidates.contains(&fake));
+        fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
     fn assets_dir_can_be_overridden_by_env() {
         let _guard = ENV_LOCK.lock().expect("env lock");
 
