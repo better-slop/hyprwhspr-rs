@@ -9,6 +9,8 @@ const SYSTEMD_SERVICE: &str = include_str!("../../config/systemd/hyprwhspr-rs.se
 pub fn install(force: bool) -> Result<()> {
     println!("{}", "Installing systemd service...".blue());
 
+    let rendered = render_systemd_service()?;
+
     let systemd_dir = xdg_config_home().join("systemd/user");
     fs::create_dir_all(&systemd_dir)?;
 
@@ -17,7 +19,7 @@ pub fn install(force: bool) -> Result<()> {
     // Check if already installed and identical
     if dst.exists() && !force {
         let existing = fs::read_to_string(&dst)?;
-        if existing == SYSTEMD_SERVICE {
+        if existing == rendered {
             println!("  {} Service file already up to date", "○".yellow());
             daemon_reload_enable_start()?;
             return Ok(());
@@ -25,12 +27,33 @@ pub fn install(force: bool) -> Result<()> {
         backup_file(&dst)?;
     }
 
-    fs::write(&dst, SYSTEMD_SERVICE)?;
+    fs::write(&dst, rendered)?;
     println!("  {} Installed: {}", "✓".green(), dst.display());
 
     daemon_reload_enable_start()?;
 
     Ok(())
+}
+
+fn render_systemd_service() -> Result<String> {
+    let exe = std::env::current_exe()?;
+    let exe = exe
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Executable path is not valid UTF-8"))?;
+
+    let mut out = String::new();
+    for line in SYSTEMD_SERVICE.lines() {
+        if line.starts_with("ExecStart=") {
+            out.push_str("ExecStart=");
+            out.push_str(exe);
+            out.push('\n');
+        } else {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+
+    Ok(out)
 }
 
 fn daemon_reload_enable_start() -> Result<()> {
