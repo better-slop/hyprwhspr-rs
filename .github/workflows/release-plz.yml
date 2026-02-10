@@ -22,15 +22,17 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.93.0
 
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libasound2-dev libxkbcommon-dev libudev-dev
+          sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev libxkbcommon-dev libudev-dev
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-plz
 
       - name: Run release-plz release
         uses: release-plz/action@v0.5
@@ -56,12 +58,12 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.93.0
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y pkg-config libasound2-dev libxkbcommon-dev libudev-dev
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-plz
 
       - name: Run release-plz release-pr
         uses: release-plz/action@v0.5
