@@ -7,10 +7,16 @@
 </div>
 
 <p align="center">
-  <a href="https://github.com/better-slop/hyprwhspr-rs/actions/workflows/release-plz.yml">
-    <img src="https://github.com/better-slop/hyprwhspr-rs/actions/workflows/release-plz.yml/badge.svg" alt="release-plz" />
-  </a>
+  <!-- <a href="https://github.com/better-slop/hyprwhspr-rs/actions/workflows/release-plz.yml"> -->
+  <!--   <img src="https://github.com/better-slop/hyprwhspr-rs/actions/workflows/release-plz.yml/badge.svg" alt="release-plz" /> -->
+  <!-- </a> -->
   <img src="https://img.shields.io/github/v/release/better-slop/hyprwhspr-rs" alt="GitHub Release" />
+  <a href="https://crates.io/crates/hyprwhspr-rs">
+    <img src="https://img.shields.io/crates/d/hyprwhspr-rs.svg" alt="crates downloads" />
+  </a>
+  <a href="https://github.com/better-slop/hyprwhspr-rs/blob/main/LICENSE">
+    <img src="https://img.shields.io/crates/l/hyprwhspr-rs.svg" alt="license" />
+  </a>
 </p>
 
 <hr />
