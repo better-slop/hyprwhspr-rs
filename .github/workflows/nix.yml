@@ -13,7 +13,18 @@ permissions:
 
 jobs:
   build:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64-linux
+            runner: blacksmith-2vcpu-ubuntu-2404
+            experimental: false
+          - arch: aarch64-linux
+            runner: blacksmith-2vcpu-ubuntu-2404-arm
+            experimental: true
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.experimental }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,8 +35,8 @@ jobs:
           extra_nix_config: |
             experimental-features = nix-command flakes
 
-      - name: Build flake package
+      - name: Build flake package (${{ matrix.arch }})
         run: nix build .#default --print-build-logs
 
-      - name: Run flake checks
+      - name: Run flake checks (${{ matrix.arch }})
         run: nix flake check --print-build-logs
