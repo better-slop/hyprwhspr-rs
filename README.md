@@ -6,7 +6,12 @@
   <pre><code>cargo install hyprwhspr-rs</code></pre>
 </div>
 
-[![release-plz](https://github.com/better-slop/hyprwhspr-rs/actions/workflows/release-plz.yml/badge.svg)](https://github.com/better-slop/hyprwhspr-rs/actions/workflows/release-plz.yml)
+<p align="center">
+  <a href="https://github.com/better-slop/hyprwhspr-rs/actions/workflows/release-plz.yml">
+    <img src="https://github.com/better-slop/hyprwhspr-rs/actions/workflows/release-plz.yml/badge.svg" alt="release-plz" />
+  </a>
+  <img src="https://img.shields.io/github/v/release/better-slop/hyprwhspr-rs" alt="GitHub Release" />
+</p>
 
 <hr />
 
