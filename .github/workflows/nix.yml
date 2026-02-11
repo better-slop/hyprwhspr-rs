@@ -2,17 +2,30 @@ name: nix
 
 on:
   pull_request:
-  push:
-    branches:
-      - main
-    tags:
-      - "v*"
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+  pull_request_review:
+    types:
+      - submitted
 
 permissions:
   contents: read
 
 jobs:
   build:
+    if: >-
+      (
+        github.event_name == 'pull_request' &&
+        !github.event.pull_request.draft &&
+        contains(fromJson('["OWNER","MEMBER"]'), github.event.pull_request.author_association)
+      ) || (
+        github.event_name == 'pull_request_review' &&
+        github.event.review.state == 'approved' &&
+        contains(fromJson('["OWNER","MEMBER"]'), github.event.review.author_association)
+      )
     strategy:
       fail-fast: false
       matrix:
@@ -34,6 +47,9 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
+
+      - name: Configure Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@main
 
       - name: Build flake package (${{ matrix.arch }})
         run: nix build .#default --print-build-logs
