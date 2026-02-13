@@ -88,6 +88,13 @@ With NixOS:
   };
   # you can also enable cuda/rocm globally, but this will increase the build time for your entire system if you dont add the cuda build cache
   nixpkgs.config.cudaSupport = true;
+  
+  # if you use groq or gemini for transcription, you can autoload their keys with
+  services.hyprwhspr-rs = {
+    enable = true;
+    # put `GROQ_API_KEY=...` or `GEMINI_API_KEY=...` in the file you put at this path
+    environmentFile = "/path/to/hyprwhspr_secret_file";
+  };
 }
 ```
 
