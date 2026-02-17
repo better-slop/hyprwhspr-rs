@@ -58,24 +58,25 @@ https://github.com/user-attachments/assets/bbbaa1c3-1a7e-4165-ad3d-27b7465e201a
 
 1. Install the latest release from [crates.io](https://crates.io/crates/hyprwhspr-rs)
 
-    ```bash
-    cargo install hyprwhspr-rs
-    ```
-    
-    Omit `parakeet` backend:
-    ```bash
-    cargo install hyprwhspr-rs --no-default-features
-    ```
+   ```bash
+   cargo install hyprwhspr-rs
+   ```
+
+   Omit `parakeet` backend:
+
+   ```bash
+   cargo install hyprwhspr-rs --no-default-features
+   ```
 
 2. Install systemd service and Waybar module (optionally, with a WIP elephant/walker menu using `--with-elephant` flag)
 
-    ```bash
-    # Interactive install
-    hyprwhspr-rs install
+   ```bash
+   # Interactive install
+   hyprwhspr-rs install
 
-    # Optionally, install specific components (systemd, waybar, elephant)
-    hyprwhspr-rs install {--all| --service | --waybar | --elephant} {--force | -f}
-    ```
+   # Optionally, install specific components (systemd, waybar, elephant)
+   hyprwhspr-rs install {--all| --service | --waybar | --elephant} {--force | -f}
+   ```
 
 Notes:
 
@@ -95,17 +96,7 @@ Notes:
 ./scripts/install-waybar.sh
 ```
 
-Installs systemd service, Waybar module, and CSS styles. Shows mic status in your bar.
-
-## Development
-
-1. `git clone https://github.com/better-slop/hyprwhispr-rs.git`
-2. `cd hyprwhspr-rs`
-3. `cargo build --release`
-   - Faster build (skips Parakeet backend): `cargo build --release --no-default-features`
-4. Run using:
-   - pretty logs: `RUST_LOG=debug ./target/release/hyprwhspr-rs`
-   - production release: `./target/release/hyprwhspr-rs`
+## Configuration
 
 <details>
   <summary>
@@ -208,6 +199,24 @@ Installs systemd service, Waybar module, and CSS styles. Shows mic status in you
 ```
 
 </details>
+
+<details>
+  <summary>
+    <strong>Provider Setup</strong>
+    <p>Ships with three providers, `whisper_cpp` / `whisper-cli`, `groq`, and `gemini`.</p>
+  </summary>
+
+</details>
+
+## Development
+
+1. `git clone https://github.com/better-slop/hyprwhispr-rs.git`
+2. `cd hyprwhspr-rs`
+3. `cargo build --release`
+   - Faster build (skips Parakeet backend): `cargo build --release --no-default-features`
+4. Run using:
+   - pretty logs: `RUST_LOG=debug ./target/release/hyprwhspr-rs`
+   - production release: `./target/release/hyprwhspr-rs`
 
 <details>
   <summary>
