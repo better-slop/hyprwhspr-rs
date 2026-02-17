@@ -235,20 +235,10 @@ Use <code>transcription.provider</code> in <code>~/.config/hyprwhspr-rs/config.j
 
 </details>
 
-## Development
-
-1. `git clone https://github.com/better-slop/hyprwhispr-rs.git`
-2. `cd hyprwhspr-rs`
-3. `cargo build --release`
-   - Faster build (skips Parakeet backend): `cargo build --release --no-default-features`
-4. Run using:
-   - pretty logs: `RUST_LOG=debug ./target/release/hyprwhspr-rs`
-   - production release: `./target/release/hyprwhspr-rs`
-
 <details>
   <summary>
-    <strong>Earshot VAD trimming</strong> (optional)
-    <p>The default build ships with the <a href="https://crates.io/crates/earshot">earshot</a> VoiceActivityDetector baked in. Toggle <code>fast_vad.enabled</code> in your config to trim silence before any provider (whisper.cpp, Groq, Gemini) sees the audio. Extremely useful for lowering costs and increasing speed.</p>
+    <strong>Earshot VAD trimming</strong>
+    <p>The default build ships with the impressive <a href="https://crates.io/crates/earshot">earshot</a> VoiceActivityDetector baked in. Toggle <code>fast_vad.enabled</code> in your config to trim silence before any provider (whisper.cpp, Groq, Gemini) sees the audio. Extremely useful for lowering costs and increasing speed.</p>
   </summary>
 
 - Operates on the 16 kHz PCM emitted by the capture layer and shares the trimmed buffer across all providers.
@@ -261,6 +251,16 @@ All other fields in the `fast_vad` block map directly to the trimmer’s behavio
 recompiling.
 
 </details>
+
+## Development
+
+1. `git clone https://github.com/better-slop/hyprwhispr-rs.git`
+2. `cd hyprwhspr-rs`
+3. `cargo build --release`
+   - Faster build (skips Parakeet backend): `cargo build --release --no-default-features`
+4. Run using:
+   - pretty logs: `RUST_LOG=debug ./target/release/hyprwhspr-rs`
+   - production release: `./target/release/hyprwhspr-rs`
 
 <details>
   <summary>
