@@ -30,6 +30,8 @@ https://github.com/user-attachments/assets/bbbaa1c3-1a7e-4165-ad3d-27b7465e201a
 - libudev + pkg-config (required for hotplug detection; `libudev-dev` on Debian/Ubuntu)
 - GNU-only binaries (no musl releases)
 - Groq or Gemini API key (optional)
+  - Use `GROQ_API_KEY` for provider `groq`
+  - Use `GEMINI_API_KEY` for provider `gemini`
   - Groq with whisper is cheap (~$0.10 USD/month) and fast as hell. [[Data Controls](https://console.groq.com/settings/data-controls)]
   - Comparatively, Gemini is very slow but offers better output formatting.
 - Parakeet TDT (optional) - NVIDIA's local ASR model via ONNX
@@ -58,24 +60,25 @@ https://github.com/user-attachments/assets/bbbaa1c3-1a7e-4165-ad3d-27b7465e201a
 
 1. Install the latest release from [crates.io](https://crates.io/crates/hyprwhspr-rs)
 
-    ```bash
-    cargo install hyprwhspr-rs
-    ```
-    
-    Omit `parakeet` backend:
-    ```bash
-    cargo install hyprwhspr-rs --no-default-features
-    ```
+   ```bash
+   cargo install hyprwhspr-rs
+   ```
+
+   Omit `parakeet` backend:
+
+   ```bash
+   cargo install hyprwhspr-rs --no-default-features
+   ```
 
 2. Install systemd service and Waybar module (optionally, with a WIP elephant/walker menu using `--with-elephant` flag)
 
-    ```bash
-    # Interactive install
-    hyprwhspr-rs install
+   ```bash
+   # Interactive install
+   hyprwhspr-rs install
 
-    # Optionally, install specific components (systemd, waybar, elephant)
-    hyprwhspr-rs install {--all| --service | --waybar | --elephant} {--force | -f}
-    ```
+   # Optionally, install specific components (systemd, waybar, elephant)
+   hyprwhspr-rs install {--all| --service | --waybar | --elephant} {--force | -f}
+   ```
 
 Notes:
 
@@ -95,17 +98,7 @@ Notes:
 ./scripts/install-waybar.sh
 ```
 
-Installs systemd service, Waybar module, and CSS styles. Shows mic status in your bar.
-
-## Development
-
-1. `git clone https://github.com/better-slop/hyprwhispr-rs.git`
-2. `cd hyprwhspr-rs`
-3. `cargo build --release`
-   - Faster build (skips Parakeet backend): `cargo build --release --no-default-features`
-4. Run using:
-   - pretty logs: `RUST_LOG=debug ./target/release/hyprwhspr-rs`
-   - production release: `./target/release/hyprwhspr-rs`
+## Configuration
 
 <details>
   <summary>
@@ -211,20 +204,81 @@ Installs systemd service, Waybar module, and CSS styles. Shows mic status in you
 
 <details>
   <summary>
-    <strong>Earshot VAD trimming</strong> (optional)
-    <p>The default build ships with the <a href="https://crates.io/crates/earshot">earshot</a> VoiceActivityDetector baked in. Toggle <code>fast_vad.enabled</code> in your config to trim silence before any provider (whisper.cpp, Groq, Gemini) sees the audio. Extremely useful for lowering costs and increasing speed.</p>
+    <strong>Environment Variables</strong>
+    <p>Configuring providers and other overrides.</p>
   </summary>
 
+Use <code>transcription.provider</code> in <code>~/.config/hyprwhspr-rs/config.jsonc</code> to pick the backend.
+
+#### Provider API key environment variables
+
+- groq provider <strong>requires</strong>: <code>GROQ_API_KEY</code>
+- gemini provider <strong>requires</strong>: <code>GEMINI_API_KEY</code>
+- whisper_cpp (whisper-cli) <strong>does not require an API key; the binary is discovered via <code>PATH</code> and managed locations under <code>$XDG_DATA_HOME</code> / <code>$HOME</code></strong>
+
+#### Recommended setup (systemd user service)
+
+<code>hyprwhspr-rs install</code> installs a user unit with:
+
+- <code>EnvironmentFile=-%h/.config/hyprwhspr-rs/env</code>
+
+**Otherwise, set the env vars in your shell.**
+
+#### Extra env vars that affect provider behavior
+
+- For <code>whisper_cpp</code> / <code>whisper-cli</code> discovery, the app also consults:
+  - <code>PATH</code> (searches for <code>whisper-cli</code>, optional fallback names)
+  - <code>XDG_DATA_HOME</code> / <code>HOME</code> (managed whisper.cpp locations)
+- For asset overrides (start/stop sounds): <code>HYPRWHSPR_ASSETS_DIR</code>
+- Resolution logic lives in:
+  - <code>src/config.rs</code> (<code>discover_whisper_binary_candidates</code>, <code>find_binaries_on_path</code>, <code>discover_assets_dir</code>)
+
+</details>
+
+<details>
+  <summary>
+    <strong>Earshot VAD trimming</strong> (recommended)
+    <p>The default build ships with the impressive and lightweight <a href="https://crates.io/crates/earshot">earshot</a> VoiceActivityDetector baked in. Toggle <code>fast_vad.enabled</code> in your config to trim silence before any provider (whisper.cpp, Groq, Gemini) sees the audio. Extremely useful for lowering costs and increasing speed.</p>
+  </summary>
+
+#### Configuring `fast_vad`
+
+```jsonc
+"fast_vad": {
+  "enabled": false,
+  "profile": "aggressive", // quality | low_bitrate | aggressive | very_aggressive
+  "min_speech_ms": 120, // minimum speech chunk to keep
+  "silence_timeout_ms": 500, // silence length that ends a segment
+  "pre_roll_ms": 120, // speech-leading padding
+  "post_roll_ms": 150, // speech-trailing padding
+  "volatility_window": 24, // decision history window
+  "volatility_increase_threshold": 0.35, // become more aggressive above this
+  "volatility_decrease_threshold": 0.12 // relax aggressiveness below this
+}
+```
+
+#### About [`earshot`](https://crates.io/crates/earshot)
+
+- Works well for silence, not as accurate at speech compared to other models.
 - Operates on the 16 kHz PCM emitted by the capture layer and shares the trimmed buffer across all providers.
-- Drops silent stretches longer than the configured timeout while keeping configurable pre-roll and post-roll padding so
-  word edges remain intact.
+- Drops silent stretches longer than the configured timeout while keeping configurable pre-roll and post-roll padding so word edges remain intact.
 - Adapts Earshot’s aggressiveness based on recent speech/silence volatility—fewer uploads when the room is noisy.
-- If an entire recording is silent, the app short-circuits the upload path instead of dispatching an empty request.
+- If an entire recording is silent, the app attempts to short-circuit the upload path instead of dispatching an empty request.
 
 All other fields in the `fast_vad` block map directly to the trimmer’s behaviour, so you can tune aggressiveness without
 recompiling.
 
 </details>
+
+## Development
+
+1. `git clone https://github.com/better-slop/hyprwhispr-rs.git`
+2. `cd hyprwhspr-rs`
+3. `cargo build --release`
+   - Faster build (skips Parakeet backend): `cargo build --release --no-default-features`
+4. Run using:
+   - pretty logs: `RUST_LOG=debug ./target/release/hyprwhspr-rs`
+   - production release: `./target/release/hyprwhspr-rs`
 
 <details>
   <summary>
