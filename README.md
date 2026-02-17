@@ -203,7 +203,7 @@ Notes:
 <details>
   <summary>
     <strong>Provider Setup</strong>
-    <p>Ships with three providers, `whisper_cpp` / `whisper-cli`, `groq`, and `gemini`.</p>
+    <p>Ships with three providers, <code>whisper_cpp</code> (<code>whisper-cli</code>), <code>groq</code>, and <code>gemini</code>.</p>
   </summary>
 
 </details>
