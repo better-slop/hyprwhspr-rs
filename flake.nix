@@ -27,17 +27,17 @@
           src = self;
           cargoLock.lockFile = ./Cargo.lock;
 
-          nativeBuildInputs = [
-            pkgs.makeWrapper
-            pkgs.pkg-config
+          nativeBuildInputs = with pkgs; [
+            makeWrapper
+            pkg-config
           ];
 
-          buildInputs = [
-            pkgs.alsa-lib
-            pkgs.libxkbcommon
-            pkgs.onnxruntime
-            pkgs.openssl
-            pkgs.systemd
+          buildInputs = with pkgs; [
+            alsa-lib
+            libxkbcommon
+            onnxruntime
+            openssl
+            systemdMinimal
           ];
 
           env = {
