@@ -237,17 +237,33 @@ Use <code>transcription.provider</code> in <code>~/.config/hyprwhspr-rs/config.j
 
 <details>
   <summary>
-    <strong>Earshot VAD trimming</strong>
-    <p>The default build ships with the impressive <a href="https://crates.io/crates/earshot">earshot</a> VoiceActivityDetector baked in. Toggle <code>fast_vad.enabled</code> in your config to trim silence before any provider (whisper.cpp, Groq, Gemini) sees the audio. Extremely useful for lowering costs and increasing speed.</p>
+    <strong>Earshot VAD trimming</strong> (recommended)
+    <p>The default build ships with the impressive and lightweight <a href="https://crates.io/crates/earshot">earshot</a> VoiceActivityDetector baked in. Toggle <code>fast_vad.enabled</code> in your config to trim silence before any provider (whisper.cpp, Groq, Gemini) sees the audio. Extremely useful for lowering costs and increasing speed.</p>
   </summary>
 
-#### About `earshot` (`fast_vad`)
+#### Configuring `fast_vad`
 
+```jsonc
+"fast_vad": {
+  "enabled": false,
+  "profile": "aggressive", // quality | low_bitrate | aggressive | very_aggressive
+  "min_speech_ms": 120, // minimum speech chunk to keep
+  "silence_timeout_ms": 500, // silence length that ends a segment
+  "pre_roll_ms": 120, // speech-leading padding
+  "post_roll_ms": 150, // speech-trailing padding
+  "volatility_window": 24, // decision history window
+  "volatility_increase_threshold": 0.35, // become more aggressive above this
+  "volatility_decrease_threshold": 0.12 // relax aggressiveness below this
+}
+```
+
+#### About [`earshot`](https://crates.io/crates/earshot)
+
+- Works well for silence, not as accurate at speech compared to other models.
 - Operates on the 16 kHz PCM emitted by the capture layer and shares the trimmed buffer across all providers.
-- Drops silent stretches longer than the configured timeout while keeping configurable pre-roll and post-roll padding so
-  word edges remain intact.
+- Drops silent stretches longer than the configured timeout while keeping configurable pre-roll and post-roll padding so word edges remain intact.
 - Adapts Earshot’s aggressiveness based on recent speech/silence volatility—fewer uploads when the room is noisy.
-- If an entire recording is silent, the app short-circuits the upload path instead of dispatching an empty request.
+- If an entire recording is silent, the app attempts to short-circuit the upload path instead of dispatching an empty request.
 
 All other fields in the `fast_vad` block map directly to the trimmer’s behaviour, so you can tune aggressiveness without
 recompiling.
