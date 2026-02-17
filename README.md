@@ -30,6 +30,8 @@ https://github.com/user-attachments/assets/bbbaa1c3-1a7e-4165-ad3d-27b7465e201a
 - libudev + pkg-config (required for hotplug detection; `libudev-dev` on Debian/Ubuntu)
 - GNU-only binaries (no musl releases)
 - Groq or Gemini API key (optional)
+  - Use `GROQ_API_KEY` for provider `groq`
+  - Use `GEMINI_API_KEY` for provider `gemini`
   - Groq with whisper is cheap (~$0.10 USD/month) and fast as hell. [[Data Controls](https://console.groq.com/settings/data-controls)]
   - Comparatively, Gemini is very slow but offers better output formatting.
 - Parakeet TDT (optional) - NVIDIA's local ASR model via ONNX
@@ -202,9 +204,34 @@ Notes:
 
 <details>
   <summary>
-    <strong>Provider Setup</strong>
-    <p>Ships with three providers, <code>whisper_cpp</code> (<code>whisper-cli</code>), <code>groq</code>, and <code>gemini</code>.</p>
+    <strong>Environment Variables</strong>
+    <p>Configuring providers and other overrides.</p>
   </summary>
+
+Use <code>transcription.provider</code> in <code>~/.config/hyprwhspr-rs/config.jsonc</code> to pick the backend.
+
+#### Provider API key environment variables
+
+- groq provider <strong>requires</strong>: <code>GROQ_API_KEY</code>
+- gemini provider <strong>requires</strong>: <code>GEMINI_API_KEY</code>
+- whisper_cpp (whisper-cli) <strong>does not require an API key, ensure it is on path</strong>
+
+#### Recommended setup (systemd user service)
+
+<code>hyprwhspr-rs install</code> installs a user unit with:
+
+- <code>EnvironmentFile=-%h/.config/hyprwhspr-rs/env</code>
+
+**Otherwise, set the env vars in your shell.**
+
+#### Extra env vars that affect provider behavior
+
+- For <code>whisper_cpp</code> / <code>whisper-cli</code> discovery, the app also consults:
+  - <code>PATH</code> (searches for <code>whisper-cli</code>, optional fallback names)
+  - <code>XDG_DATA_HOME</code> / <code>HOME</code> (managed whisper.cpp locations)
+- For asset overrides (start/stop sounds): <code>HYPRWHSPR_ASSETS_DIR</code>
+- Resolution logic lives in:
+  - <code>src/config.rs</code> (<code>discover_whisper_binary_candidates</code>, <code>find_binaries_on_path</code>, <code>discover_assets_dir</code>)
 
 </details>
 
