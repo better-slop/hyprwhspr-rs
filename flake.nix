@@ -37,7 +37,7 @@
             libxkbcommon
             onnxruntime
             openssl
-            systemdMinimal
+            systemdLibs
           ];
 
           env = {
