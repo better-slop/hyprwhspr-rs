@@ -50,6 +50,7 @@ jobs:
             experimental-features = nix-command flakes
 
       - name: Configure Nix cache
+        if: ${{ !contains(matrix.runner, 'blacksmith') }}
         uses: DeterminateSystems/magic-nix-cache-action@main
 
       - name: Build flake package (${{ matrix.arch }})
