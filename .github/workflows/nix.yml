@@ -71,3 +71,9 @@ jobs:
 
       - name: Run flake checks (${{ matrix.arch }})
         run: nix flake check --print-build-logs
+
+      - name: Stop Nix daemon before sticky disk cleanup
+        if: ${{ always() && contains(matrix.runner, 'blacksmith') }}
+        run: |
+          sudo systemctl stop nix-daemon.socket nix-daemon.service || true
+          sudo pkill -x nix-daemon || true
