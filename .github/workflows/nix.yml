@@ -43,6 +43,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Create Nix directories
+        if: ${{ contains(matrix.runner, 'blacksmith') }}
+        run: |
+          sudo mkdir -p /nix/store
+          sudo chmod -R 777 /nix
+
+      - name: Mount Nix store sticky disk
+        if: ${{ contains(matrix.runner, 'blacksmith') }}
+        uses: useblacksmith/stickydisk@v1
+        with:
+          key: ${{ github.repository }}-nix-store-${{ matrix.arch }}
+          path: /nix
+
       - name: Install Nix
         uses: cachix/install-nix-action@v31
         with:
