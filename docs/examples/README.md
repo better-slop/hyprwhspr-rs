@@ -39,3 +39,12 @@ Hyprwhspr-rs currently ships with three main integrations: a [Hyprland](https://
     }
   ]
   ```
+
+## Examples
+
+### Quickshell
+[This integration](./quickshell/README.md) shows a floating mic icon in the center of the screen while hyprwhspr is recording.
+
+https://github.com/user-attachments/assets/62d51e4c-1c3f-4774-b33e-5539dc56c91e
+
+![a mic icon centered in the screen, indicating hyprwhspr is recording](./quickshell/demo/mic.png)
