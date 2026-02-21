@@ -1,7 +1,7 @@
 use crate::logging::{record_text_pipeline, PipelineStepRecord, TextPipelineRecord};
 use anyhow::{anyhow, Context, Result};
 use arboard::Clipboard;
-use enigo::{Enigo, Keyboard, Settings};
+use enigo::{Keyboard, Settings};
 use regex::Regex;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -844,7 +844,6 @@ fn trim_spaces_around_newlines(input: &str) -> (String, usize) {
 }
 
 pub struct TextInjector {
-    enigo: Enigo,
     clipboard: Clipboard,
     word_overrides: HashMap<String, String>,
     extra_shift_classes: HashSet<String>,
@@ -865,9 +864,6 @@ impl TextInjector {
         word_overrides: HashMap<String, String>,
         _auto_copy_clipboard: bool,
     ) -> Result<Self> {
-        let enigo = Enigo::new(&Settings::default())
-            .context("Failed to initialize Enigo for text injection")?;
-
         let clipboard = Clipboard::new().context("Failed to initialize clipboard")?;
 
         let sanitized_overrides = sanitize_word_overrides(word_overrides);
@@ -881,7 +877,6 @@ impl TextInjector {
         }
 
         Ok(Self {
-            enigo,
             clipboard,
             word_overrides: sanitized_overrides,
             extra_shift_classes: extra_shift_classes
@@ -1089,20 +1084,24 @@ impl TextInjector {
 
     fn inject_via_enigo_shift_paste(&mut self) -> Result<()> {
         use enigo::{Direction, Key};
+        // Initialize fallback keyboard injection only when needed to avoid
+        // keeping a persistent virtual keyboard active for the entire app lifetime.
+        let mut enigo = enigo::Enigo::new(&Settings::default())
+            .context("Failed to initialize Enigo for text injection")?;
 
-        self.enigo
+        enigo
             .key(Key::Control, Direction::Press)
             .context("Failed to press Ctrl")?;
-        self.enigo
+        enigo
             .key(Key::Shift, Direction::Press)
             .context("Failed to press Shift")?;
-        self.enigo
+        enigo
             .key(Key::Unicode('v'), Direction::Click)
             .context("Failed to press V")?;
-        self.enigo
+        enigo
             .key(Key::Shift, Direction::Release)
             .context("Failed to release Shift")?;
-        self.enigo
+        enigo
             .key(Key::Control, Direction::Release)
             .context("Failed to release Ctrl")?;
 
@@ -1112,15 +1111,19 @@ impl TextInjector {
 
     fn inject_via_enigo_global_paste(&mut self) -> Result<()> {
         use enigo::{Direction, Key};
+        // Initialize fallback keyboard injection only when needed to avoid
+        // keeping a persistent virtual keyboard active for the entire app lifetime.
+        let mut enigo = enigo::Enigo::new(&Settings::default())
+            .context("Failed to initialize Enigo for text injection")?;
 
         // Universal paste: Shift+Insert works in most applications including terminals
-        self.enigo
+        enigo
             .key(Key::Shift, Direction::Press)
             .context("Failed to press Shift")?;
-        self.enigo
+        enigo
             .key(Key::Insert, Direction::Click)
             .context("Failed to press Insert")?;
-        self.enigo
+        enigo
             .key(Key::Shift, Direction::Release)
             .context("Failed to release Shift")?;
 
