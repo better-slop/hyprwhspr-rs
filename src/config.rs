@@ -39,12 +39,6 @@ pub struct PasteHintsConfig {
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shift_insert: Vec<String>,
-
-    #[serde(
-        default = "default_paste_hint_precedence",
-        skip_serializing_if = "is_default_paste_hint_precedence"
-    )]
-    pub precedence: Vec<String>,
 }
 
 impl Default for PasteHintsConfig {
@@ -52,7 +46,6 @@ impl Default for PasteHintsConfig {
         Self {
             shift: Vec::new(),
             shift_insert: Vec::new(),
-            precedence: default_paste_hint_precedence(),
         }
     }
 }
@@ -163,14 +156,6 @@ fn default_auto_copy_clipboard() -> bool {
 
 fn default_shift_paste() -> bool {
     true
-}
-
-fn default_paste_hint_precedence() -> Vec<String> {
-    vec!["ctrl_shift_v".to_string(), "shift_insert".to_string()]
-}
-
-fn is_default_paste_hint_precedence(value: &[String]) -> bool {
-    value == default_paste_hint_precedence().as_slice()
 }
 
 fn default_no_speech_threshold() -> f32 {

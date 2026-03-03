@@ -123,11 +123,6 @@ impl ClassPasteShortcut {
     }
 }
 
-const DEFAULT_CLASS_PASTE_PRECEDENCE: &[ClassPasteShortcut] = &[
-    ClassPasteShortcut::CtrlShiftV,
-    ClassPasteShortcut::ShiftInsert,
-];
-
 struct HyprlandDispatcher {
     socket_path: PathBuf,
 }
@@ -867,9 +862,8 @@ fn trim_spaces_around_newlines(input: &str) -> (String, usize) {
 pub struct TextInjector {
     clipboard: Clipboard,
     word_overrides: HashMap<String, String>,
-    extra_shift_classes: HashSet<String>,
-    extra_shift_insert_classes: HashSet<String>,
-    class_paste_precedence: Vec<ClassPasteShortcut>,
+    extra_shift_classes: Vec<String>,
+    extra_shift_insert_classes: Vec<String>,
     default_shift_paste: bool,
     global_paste_shortcut: bool,
     hyprland_dispatcher: Option<HyprlandDispatcher>,
@@ -885,7 +879,6 @@ impl TextInjector {
         global_paste_shortcut: bool,
         extra_shift_classes: Vec<String>,
         extra_shift_insert_classes: Vec<String>,
-        class_paste_precedence: Vec<String>,
         word_overrides: HashMap<String, String>,
         _auto_copy_clipboard: bool,
     ) -> Result<Self> {
@@ -906,7 +899,6 @@ impl TextInjector {
             word_overrides: sanitized_overrides,
             extra_shift_classes: normalize_hint_classes(extra_shift_classes),
             extra_shift_insert_classes: normalize_hint_classes(extra_shift_insert_classes),
-            class_paste_precedence: parse_class_paste_precedence(class_paste_precedence),
             default_shift_paste: shift_paste_default,
             global_paste_shortcut,
             hyprland_dispatcher,
@@ -958,7 +950,6 @@ impl TextInjector {
                             &class,
                             &self.extra_shift_classes,
                             &self.extra_shift_insert_classes,
-                            &self.class_paste_precedence,
                         ) {
                             debug!(
                                 class = class.as_str(),
@@ -1371,27 +1362,30 @@ fn send_virtual_keyboard_global_paste(client: &mut WrtypeClient) -> Result<()> {
 
 fn class_paste_hint_for_class(
     class: &str,
-    extra_shift_classes: &HashSet<String>,
-    extra_shift_insert_classes: &HashSet<String>,
-    precedence: &[ClassPasteShortcut],
+    extra_shift_classes: &[String],
+    extra_shift_insert_classes: &[String],
 ) -> Option<ClassPasteShortcut> {
-    let supports_ctrl_shift_v =
-        built_in_shift_hint_for_class(class) || class_matches_hint_set(class, extra_shift_classes);
-    let supports_shift_insert = class_matches_hint_set(class, extra_shift_insert_classes);
+    let shift_index = class_hint_index(class, extra_shift_classes);
+    let shift_insert_index = class_hint_index(class, extra_shift_insert_classes);
 
-    for shortcut in precedence {
-        match shortcut {
-            ClassPasteShortcut::CtrlShiftV if supports_ctrl_shift_v => {
-                return Some(ClassPasteShortcut::CtrlShiftV);
+    match (shift_index, shift_insert_index) {
+        (Some(shift), Some(shift_insert)) => {
+            if shift <= shift_insert {
+                Some(ClassPasteShortcut::CtrlShiftV)
+            } else {
+                Some(ClassPasteShortcut::ShiftInsert)
             }
-            ClassPasteShortcut::ShiftInsert if supports_shift_insert => {
-                return Some(ClassPasteShortcut::ShiftInsert);
+        }
+        (Some(_), None) => Some(ClassPasteShortcut::CtrlShiftV),
+        (None, Some(_)) => Some(ClassPasteShortcut::ShiftInsert),
+        (None, None) => {
+            if built_in_shift_hint_for_class(class) {
+                Some(ClassPasteShortcut::CtrlShiftV)
+            } else {
+                None
             }
-            _ => {}
         }
     }
-
-    None
 }
 
 fn built_in_shift_hint_for_class(class: &str) -> bool {
@@ -1412,66 +1406,31 @@ fn built_in_shift_hint_for_class(class: &str) -> bool {
     false
 }
 
-fn class_matches_hint_set(class: &str, hints: &HashSet<String>) -> bool {
+fn class_hint_index(class: &str, hints: &[String]) -> Option<usize> {
     if hints.is_empty() {
-        return false;
+        return None;
     }
 
     let lower = class.to_ascii_lowercase();
-    if hints.contains(&lower) {
-        return true;
-    }
-
-    for component in lower.split(['.', '-', '_']) {
-        if hints.contains(component) {
+    let components: HashSet<&str> = lower.split(['.', '-', '_']).collect();
+    hints.iter().position(|hint| {
+        if hint == &lower {
             return true;
         }
-    }
-
-    false
+        components.contains(hint.as_str())
+    })
 }
 
-fn normalize_hint_classes(entries: Vec<String>) -> HashSet<String> {
-    entries
-        .into_iter()
-        .map(|entry| entry.trim().to_ascii_lowercase())
-        .filter(|entry| !entry.is_empty())
-        .collect()
-}
-
-fn parse_class_paste_precedence(precedence: Vec<String>) -> Vec<ClassPasteShortcut> {
-    let mut parsed = Vec::new();
+fn normalize_hint_classes(entries: Vec<String>) -> Vec<String> {
+    let mut normalized = Vec::new();
     let mut seen = HashSet::new();
-
-    for value in precedence {
-        if let Some(shortcut) = parse_class_paste_shortcut(&value) {
-            if seen.insert(shortcut) {
-                parsed.push(shortcut);
-            }
+    for entry in entries {
+        let normalized_entry = entry.trim().to_ascii_lowercase();
+        if !normalized_entry.is_empty() && seen.insert(normalized_entry.clone()) {
+            normalized.push(normalized_entry);
         }
     }
-
-    for shortcut in DEFAULT_CLASS_PASTE_PRECEDENCE {
-        if seen.insert(*shortcut) {
-            parsed.push(*shortcut);
-        }
-    }
-
-    parsed
-}
-
-fn parse_class_paste_shortcut(value: &str) -> Option<ClassPasteShortcut> {
-    let canonical = value
-        .trim()
-        .to_ascii_lowercase()
-        .replace(' ', "")
-        .replace('-', "_");
-
-    match canonical.as_str() {
-        "ctrl_shift_v" | "ctrl+shift+v" | "shift+ctrl+v" => Some(ClassPasteShortcut::CtrlShiftV),
-        "shift_insert" | "shift+insert" => Some(ClassPasteShortcut::ShiftInsert),
-        _ => None,
-    }
+    normalized
 }
 
 fn normalize_line_breaks(input: &str) -> String {
@@ -1684,59 +1643,44 @@ Title: sample
     }
 
     #[test]
-    fn class_paste_hint_respects_precedence_order() {
-        let shift_classes = normalize_hint_classes(vec!["zed".to_string()]);
-        let shift_insert_classes = normalize_hint_classes(vec!["zed".to_string()]);
-
-        let ctrl_shift_first = parse_class_paste_precedence(vec![
-            "ctrl_shift_v".to_string(),
-            "shift_insert".to_string(),
-        ]);
-        let shift_insert_first = parse_class_paste_precedence(vec![
-            "shift_insert".to_string(),
-            "ctrl_shift_v".to_string(),
-        ]);
+    fn class_paste_hint_uses_first_class_instantiation() {
+        let shift_classes = normalize_hint_classes(vec!["foo".to_string(), "zed".to_string()]);
+        let shift_insert_classes =
+            normalize_hint_classes(vec!["zed".to_string(), "bar".to_string()]);
 
         assert_eq!(
-            class_paste_hint_for_class(
-                "dev.zed.Zed",
-                &shift_classes,
-                &shift_insert_classes,
-                &ctrl_shift_first
-            ),
-            Some(ClassPasteShortcut::CtrlShiftV)
-        );
-        assert_eq!(
-            class_paste_hint_for_class(
-                "dev.zed.Zed",
-                &shift_classes,
-                &shift_insert_classes,
-                &shift_insert_first
-            ),
+            class_paste_hint_for_class("dev.zed.Zed", &shift_classes, &shift_insert_classes),
             Some(ClassPasteShortcut::ShiftInsert)
         );
     }
 
     #[test]
-    fn class_hint_match_supports_component_names() {
+    fn class_hint_lookup_supports_component_names() {
         let hints = normalize_hint_classes(vec!["zed".to_string()]);
-        assert!(class_matches_hint_set("dev.zed.Zed", &hints));
+        assert_eq!(class_hint_index("dev.zed.Zed", &hints), Some(0));
     }
 
     #[test]
-    fn class_paste_precedence_adds_missing_defaults_and_dedupes() {
-        let parsed = parse_class_paste_precedence(vec![
-            "shift+insert".to_string(),
-            "unknown".to_string(),
-            "shift_insert".to_string(),
-        ]);
-
+    fn class_paste_hint_falls_back_to_built_in_terminal_rules() {
+        let shift_classes = normalize_hint_classes(Vec::new());
+        let shift_insert_classes = normalize_hint_classes(Vec::new());
         assert_eq!(
-            parsed,
-            vec![
-                ClassPasteShortcut::ShiftInsert,
-                ClassPasteShortcut::CtrlShiftV
-            ]
+            class_paste_hint_for_class("kitty", &shift_classes, &shift_insert_classes),
+            Some(ClassPasteShortcut::CtrlShiftV)
+        );
+    }
+
+    #[test]
+    fn normalize_hint_classes_dedupes_preserving_first_order() {
+        let normalized = normalize_hint_classes(vec![
+            "ZED".to_string(),
+            "zed".to_string(),
+            " dev.zed.zed ".to_string(),
+            "".to_string(),
+        ]);
+        assert_eq!(
+            normalized,
+            vec!["zed".to_string(), "dev.zed.zed".to_string()]
         );
     }
 }

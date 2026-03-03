@@ -58,26 +58,17 @@ fn legacy_primary_shortcut_populates_press_even_with_hold() {
 }
 
 #[test]
-fn paste_hints_default_precedence_is_stable() {
-    let config = Config::default();
-    assert_eq!(
-        config.paste_hints.precedence,
-        vec!["ctrl_shift_v".to_string(), "shift_insert".to_string()]
-    );
-}
-
-#[test]
-fn paste_hints_precedence_preserves_user_order() {
+fn paste_hints_shift_insert_deserializes() {
     let json = r#"{
         "paste_hints":{
             "shift":["zed"],
-            "shift_insert":["zed"],
-            "precedence":["shift_insert","ctrl_shift_v"]
+            "shift_insert":["dev.zed.Zed"]
         }
     }"#;
     let config: Config = serde_json::from_str(json).expect("deserialize config");
+    assert_eq!(config.paste_hints.shift, vec!["zed".to_string()]);
     assert_eq!(
-        config.paste_hints.precedence,
-        vec!["shift_insert".to_string(), "ctrl_shift_v".to_string()]
+        config.paste_hints.shift_insert,
+        vec!["dev.zed.Zed".to_string()]
     );
 }

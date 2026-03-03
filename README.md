@@ -141,10 +141,6 @@ Notes:
     "shift_insert": [
       // Optional list of Hyprland window classes that should always paste with Shift+Insert
     ],
-    "precedence": [
-      "ctrl_shift_v", // Highest-priority class hint first
-      "shift_insert",
-    ],
   },
   "audio_device": null, // Force a specific input device index (null uses system default)
   "fast_vad": {
