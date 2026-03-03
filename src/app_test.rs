@@ -61,6 +61,8 @@ impl HyprwhsprAppTest {
             config.shift_paste,
             config.global_paste_shortcut,
             config.paste_hints.shift.clone(),
+            config.paste_hints.shift_insert.clone(),
+            config.paste_hints.precedence.clone(),
             config.word_overrides.clone(),
             config.auto_copy_clipboard,
         )?;
@@ -121,6 +123,8 @@ impl HyprwhsprAppTest {
             new_config.shift_paste,
             new_config.global_paste_shortcut,
             new_config.paste_hints.shift.clone(),
+            new_config.paste_hints.shift_insert.clone(),
+            new_config.paste_hints.precedence.clone(),
             new_config.word_overrides.clone(),
             new_config.auto_copy_clipboard,
         )?;
