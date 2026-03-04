@@ -36,11 +36,17 @@ impl Default for ShortcutsConfig {
 pub struct PasteHintsConfig {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shift: Vec<String>,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shift_insert: Vec<String>,
 }
 
 impl Default for PasteHintsConfig {
     fn default() -> Self {
-        Self { shift: Vec::new() }
+        Self {
+            shift: Vec::new(),
+            shift_insert: Vec::new(),
+        }
     }
 }
 

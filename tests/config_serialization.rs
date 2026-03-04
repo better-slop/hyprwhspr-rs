@@ -56,3 +56,19 @@ fn legacy_primary_shortcut_populates_press_even_with_hold() {
     assert_eq!(config.shortcuts.hold.as_deref(), Some("SUPER+R"));
     assert_eq!(config.shortcuts.press.as_deref(), Some("SUPER+SHIFT+R"));
 }
+
+#[test]
+fn paste_hints_shift_insert_deserializes() {
+    let json = r#"{
+        "paste_hints":{
+            "shift":["zed"],
+            "shift_insert":["dev.zed.Zed"]
+        }
+    }"#;
+    let config: Config = serde_json::from_str(json).expect("deserialize config");
+    assert_eq!(config.paste_hints.shift, vec!["zed".to_string()]);
+    assert_eq!(
+        config.paste_hints.shift_insert,
+        vec!["dev.zed.Zed".to_string()]
+    );
+}

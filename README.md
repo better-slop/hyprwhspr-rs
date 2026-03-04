@@ -172,10 +172,13 @@ With NixOS:
   "stop_sound_path": null, // Optional custom audio asset overrides
   "auto_copy_clipboard": true, // Automatically copy the final transcription to the clipboard
   "shift_paste": false, // Whether to force shift paste
-  "global_paste_shortcut": false, // Enable the compositor-level paste shortcut (Omarchy's addition)
+  "global_paste_shortcut": false, // Enable compositor-level paste; uses Hyprland sendshortcut with Shift+Insert for all pastes
   "paste_hints": {
     "shift": [
-      // Optional list of Hyprland window classes that should always paste with Ctrl+Shift+V
+      // List of window classes that will always paste with Ctrl+Shift+V
+    ],
+    "shift_insert": [
+      // List of window classes that will always paste with Shift+Insert
     ],
   },
   "audio_device": null, // Force a specific input device index (null uses system default)
