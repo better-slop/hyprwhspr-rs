@@ -108,6 +108,14 @@ const SHIFT_PASTE_CLASS_COMPONENTS: &[&str] = &[
     "urxvt",
 ];
 
+const SHIFT_INSERT_PASTE_CLASSES: &[&str] = &["dev.zed.Zed"];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClassPasteShortcut {
+    CtrlShiftV,
+    ShiftInsert,
+}
+
 struct HyprlandDispatcher {
     socket_path: PathBuf,
 }
@@ -139,7 +147,8 @@ impl HyprlandDispatcher {
 
     async fn send_global_paste_shortcut(&self) -> Result<()> {
         // Universal paste: Shift+Insert works in most applications including terminals
-        self.send_shortcut(&["shift"], "Insert", Some("active")).await
+        self.send_shortcut(&["shift"], "Insert", Some("active"))
+            .await
     }
 
     async fn send_shortcut(
@@ -919,59 +928,31 @@ impl TextInjector {
         let use_global_paste = self.global_paste_shortcut;
 
         if use_global_paste {
-            // Universal paste mode: use Shift+Insert across all backends
-            if let Some(dispatcher) = self.hyprland_dispatcher.as_ref() {
-                debug!("Hyprland sendshortcut universal paste attempt (Shift+Insert)");
-                match dispatcher.send_global_paste_shortcut().await {
-                    Ok(_) => {
-                        info!("✅ Text injected via Hyprland universal paste (Shift+Insert)");
-                        return Ok(());
-                    }
-                    Err(err) => {
-                        warn!("Hyprland universal paste (Shift+Insert) failed: {err:?}");
-                    }
-                }
-            }
-
-            if let Some(client) = self.ensure_wrtype_client() {
-                debug!("Wayland virtual keyboard universal paste attempt (Shift+Insert)");
-                match send_virtual_keyboard_global_paste(client) {
-                    Ok(_) => {
-                        info!("✅ Text injected via Wayland virtual keyboard universal paste");
-                        return Ok(());
-                    }
-                    Err(err) => {
-                        warn!("Wayland virtual keyboard universal paste failed: {err:?}");
-                        self.invalidate_wrtype_client();
-                    }
-                }
-            }
-
-            debug!("Falling back to Shift+Insert paste via Enigo");
-            return self.inject_via_enigo_global_paste();
+            return self.inject_via_shift_insert().await;
         }
 
         // Window-based paste mode: use Ctrl+V or Ctrl+Shift+V based on window class
-        let mut shift_hint: Option<bool> = None;
+        let mut class_hint: Option<ClassPasteShortcut> = None;
         let default_shift = self.default_shift_paste;
 
         if let Some(dispatcher) = self.hyprland_dispatcher.as_ref() {
             match dispatcher.active_window_class().await {
                 Ok(class_opt) => {
                     if let Some(class) = class_opt {
-                        if let Some(needs_shift) =
-                            shift_hint_for_class(&class, &self.extra_shift_classes)
+                        if let Some(shortcut) =
+                            class_paste_hint_for_class(&class, &self.extra_shift_classes)
                         {
                             debug!(
                                 class = class.as_str(),
-                                needs_shift, "Hyprland active window classification"
+                                ?shortcut,
+                                "Hyprland active window classification"
                             );
-                            shift_hint = Some(needs_shift);
+                            class_hint = Some(shortcut);
                         } else {
                             debug!(
                                 class = class.as_str(),
                                 default = default_shift,
-                                "Hyprland active window classification has no explicit shift rule"
+                                "Hyprland active window classification has no explicit paste rule"
                             );
                         }
                     }
@@ -981,7 +962,12 @@ impl TextInjector {
                 }
             }
 
-            let use_shift = shift_hint.unwrap_or(default_shift);
+            if matches!(class_hint, Some(ClassPasteShortcut::ShiftInsert)) {
+                return self.inject_via_shift_insert().await;
+            }
+
+            let use_shift = matches!(class_hint, Some(ClassPasteShortcut::CtrlShiftV))
+                || class_hint.is_none() && default_shift;
             debug!(use_shift, "Hyprland sendshortcut paste attempt");
 
             match dispatcher.send_paste_shortcut(use_shift).await {
@@ -996,7 +982,8 @@ impl TextInjector {
         }
 
         if let Some(client) = self.ensure_wrtype_client() {
-            let use_shift = shift_hint.unwrap_or(default_shift);
+            let use_shift = matches!(class_hint, Some(ClassPasteShortcut::CtrlShiftV))
+                || class_hint.is_none() && default_shift;
             match send_virtual_keyboard_paste(client, use_shift) {
                 Ok(_) => {
                     info!("✅ Text injected via Wayland virtual keyboard");
@@ -1011,6 +998,38 @@ impl TextInjector {
 
         debug!("Falling back to Ctrl+Shift+V paste via Enigo");
         self.inject_via_enigo_shift_paste()
+    }
+
+    async fn inject_via_shift_insert(&mut self) -> Result<()> {
+        if let Some(dispatcher) = self.hyprland_dispatcher.as_ref() {
+            debug!("Hyprland sendshortcut paste attempt (Shift+Insert)");
+            match dispatcher.send_global_paste_shortcut().await {
+                Ok(_) => {
+                    info!("✅ Text injected via Hyprland paste (Shift+Insert)");
+                    return Ok(());
+                }
+                Err(err) => {
+                    warn!("Hyprland paste (Shift+Insert) failed: {err:?}");
+                }
+            }
+        }
+
+        if let Some(client) = self.ensure_wrtype_client() {
+            debug!("Wayland virtual keyboard paste attempt (Shift+Insert)");
+            match send_virtual_keyboard_global_paste(client) {
+                Ok(_) => {
+                    info!("✅ Text injected via Wayland virtual keyboard paste (Shift+Insert)");
+                    return Ok(());
+                }
+                Err(err) => {
+                    warn!("Wayland virtual keyboard paste (Shift+Insert) failed: {err:?}");
+                    self.invalidate_wrtype_client();
+                }
+            }
+        }
+
+        debug!("Falling back to Shift+Insert paste via Enigo");
+        self.inject_via_enigo_global_paste()
     }
 
     fn copy_processed_text(&mut self, text: &str) -> Result<()> {
@@ -1327,28 +1346,62 @@ fn send_virtual_keyboard_global_paste(client: &mut WrtypeClient) -> Result<()> {
     client.send_shortcut(&[Modifier::Shift], "Insert")
 }
 
-fn shift_hint_for_class(class: &str, extra_shift_classes: &HashSet<String>) -> Option<bool> {
+fn class_paste_hint_for_class(
+    class: &str,
+    extra_shift_classes: &HashSet<String>,
+) -> Option<ClassPasteShortcut> {
+    if configured_shift_hint_for_class(class, extra_shift_classes) {
+        return Some(ClassPasteShortcut::CtrlShiftV);
+    }
+
+    if shift_insert_hint_for_class(class) {
+        return Some(ClassPasteShortcut::ShiftInsert);
+    }
+
+    if built_in_shift_hint_for_class(class) {
+        return Some(ClassPasteShortcut::CtrlShiftV);
+    }
+
+    None
+}
+
+fn configured_shift_hint_for_class(class: &str, extra_shift_classes: &HashSet<String>) -> bool {
+    let lower = class.to_ascii_lowercase();
+    if extra_shift_classes.contains(&lower) {
+        return true;
+    }
+
+    for component in lower.split(['.', '-', '_']) {
+        if extra_shift_classes.contains(component) {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn shift_insert_hint_for_class(class: &str) -> bool {
+    SHIFT_INSERT_PASTE_CLASSES
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(class))
+}
+
+fn built_in_shift_hint_for_class(class: &str) -> bool {
     if SHIFT_PASTE_CLASSES
         .iter()
         .any(|candidate| candidate.eq_ignore_ascii_case(class))
     {
-        return Some(true);
+        return true;
     }
 
     let lower = class.to_ascii_lowercase();
-    if extra_shift_classes.contains(&lower) {
-        return Some(true);
-    }
-
     for component in lower.split(['.', '-', '_']) {
-        if SHIFT_PASTE_CLASS_COMPONENTS.iter().any(|c| c == &component)
-            || extra_shift_classes.contains(component)
-        {
-            return Some(true);
+        if SHIFT_PASTE_CLASS_COMPONENTS.iter().any(|c| c == &component) {
+            return true;
         }
     }
 
-    None
+    false
 }
 
 fn normalize_line_breaks(input: &str) -> String {
@@ -1558,5 +1611,35 @@ Title: sample
         let sample = r#"{"address":"0x123","class":"foot","title":"shell"}"#;
         let class = super::HyprlandDispatcher::extract_window_class_from_response(sample).unwrap();
         assert_eq!(class, Some("foot".to_string()));
+    }
+
+    #[test]
+    fn configured_paste_hint_takes_precedence_over_zed_shift_insert() {
+        let extra_shift_classes = HashSet::from(["zed".to_string()]);
+        assert_eq!(
+            class_paste_hint_for_class("dev.zed.Zed", &extra_shift_classes),
+            Some(ClassPasteShortcut::CtrlShiftV)
+        );
+    }
+
+    #[test]
+    fn zed_uses_built_in_shift_insert_without_config_override() {
+        assert_eq!(
+            class_paste_hint_for_class("dev.zed.Zed", &HashSet::new()),
+            Some(ClassPasteShortcut::ShiftInsert)
+        );
+    }
+
+    #[test]
+    fn zed_shift_insert_rule_does_not_use_component_fallback() {
+        assert_eq!(class_paste_hint_for_class("zed", &HashSet::new()), None);
+    }
+
+    #[test]
+    fn terminal_classes_keep_built_in_shift_paste() {
+        assert_eq!(
+            class_paste_hint_for_class("kitty", &HashSet::new()),
+            Some(ClassPasteShortcut::CtrlShiftV)
+        );
     }
 }
