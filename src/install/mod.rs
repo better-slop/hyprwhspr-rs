@@ -99,6 +99,7 @@ pub fn run_install(args: &InstallArgs) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(target_os = "windows"))]
 fn interactive_select() -> Result<Vec<Component>> {
     let items: Vec<&str> = Component::all().iter().map(|c| c.label()).collect();
 
@@ -119,6 +120,7 @@ fn interactive_select() -> Result<Vec<Component>> {
     Ok(selections.iter().map(|&i| Component::all()[i]).collect())
 }
 
+#[cfg(not(target_os = "windows"))]
 fn create_directories() -> Result<()> {
     let dirs = [
         xdg_cache_home().join("hyprwhspr-rs"),
@@ -134,6 +136,7 @@ fn create_directories() -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(target_os = "windows"))]
 fn print_summary(components: &[Component]) {
     println!();
     println!("{}", "━".repeat(70));
