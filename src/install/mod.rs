@@ -49,6 +49,9 @@ pub fn run_install(args: &InstallArgs) -> Result<()> {
         anyhow::bail!("`hyprwhspr-rs install` is not supported on Windows");
     }
 
+    #[cfg(not(target_os = "windows"))]
+    let _ = args;
+
     println!();
     println!("{}", "━".repeat(70));
     println!("  hyprwhspr-rs Integration Installer");

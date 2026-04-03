@@ -31,9 +31,6 @@ cpal = "0.15"
 rodio = "0.17"
 earshot = "0.1"
 
-# Parakeet TDT (NVIDIA ASR)
-parakeet-rs = { version = "0.2.7", optional = true }
-
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -57,6 +54,7 @@ arboard = { version = "3", features = ["wayland-data-control"] }
 enigo = { version = "0.2", default-features = false, features = ["wayland"] }
 evdev = "0.12"
 libc = "0.2"
+parakeet-rs = { version = "0.2.7", optional = true }
 udev = "0.9.3"
 wl-clipboard-rs = "0.9"
 wrtype = "0.1"
@@ -65,6 +63,7 @@ wrtype = "0.1"
 arboard = "3"
 enigo = { version = "0.2", default-features = false }
 handy-keys = "0.2.4"
+parakeet-rs = { version = "0.2.7", optional = true, default-features = false, features = ["cpu", "load-dynamic"] }
 
 [features]
 default = ["parakeet"]

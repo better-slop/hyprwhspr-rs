@@ -278,6 +278,7 @@ GEMINI_API_KEY=...
 HYPRWHSPR_WHISPER_CLI=/path/to/whisper-cli
 HYPRWHSPR_WHISPER_MODEL_DIR=/path/to/whisper-models
 HYPRWHSPR_PARAKEET_MODEL_DIR=/path/to/parakeet-tdt-0.6b-v3-onnx
+ORT_DYLIB_PATH=/path/to/onnxruntime.dll
 HYPRWHSPR_ASSETS_DIR=/path/to/assets
 ```
 
@@ -297,6 +298,8 @@ HYPRWHSPR_ASSETS_DIR=/path/to/assets
   - <code>PATH</code> (searches for <code>whisper-cli</code>, optional fallback names)
   - <code>XDG_DATA_HOME</code> / <code>HOME</code> (managed whisper.cpp locations)
 - For Parakeet model overrides: <code>HYPRWHSPR_PARAKEET_MODEL_DIR</code>
+- Windows Parakeet builds use dynamic ONNX Runtime loading:
+  - set <code>ORT_DYLIB_PATH</code> to <code>onnxruntime.dll</code>
 - For asset overrides (start/stop sounds): <code>HYPRWHSPR_ASSETS_DIR</code>
 - Resolution logic lives in:
   - <code>src/config.rs</code> (<code>discover_whisper_binary_candidates</code>, <code>find_binaries_on_path</code>, <code>discover_assets_dir</code>)
