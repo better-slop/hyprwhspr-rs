@@ -7,8 +7,9 @@ use anyhow::Result;
 #[cfg(not(target_os = "windows"))]
 use anyhow::Context;
 use dialoguer::Confirm;
+use dialoguer::theme::ColorfulTheme;
 #[cfg(not(target_os = "windows"))]
-use dialoguer::{console::Style, theme::ColorfulTheme, MultiSelect};
+use dialoguer::{console::Style, MultiSelect};
 use owo_colors::OwoColorize;
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
