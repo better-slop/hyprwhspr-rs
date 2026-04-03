@@ -8,6 +8,7 @@ pub mod input;
 pub mod install;
 pub mod logging;
 pub mod paths;
+pub mod runtime_env;
 pub mod status;
 pub mod transcription;
 pub mod whisper;

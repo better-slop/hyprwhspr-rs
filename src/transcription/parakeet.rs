@@ -41,21 +41,21 @@ impl ParakeetTranscriber {
 
         if !has_encoder {
             anyhow::bail!(
-                "Parakeet TDT encoder model not found in {}. Run scripts/download-parakeet-tdt.sh",
+                "Parakeet TDT encoder model not found in {}. Download the Parakeet TDT model files and point `transcription.parakeet.model_dir` or `HYPRWHSPR_PARAKEET_MODEL_DIR` at them.",
                 self.model_dir.display()
             );
         }
 
         if !has_decoder {
             anyhow::bail!(
-                "Parakeet TDT decoder model not found in {}. Run scripts/download-parakeet-tdt.sh",
+                "Parakeet TDT decoder model not found in {}. Download the Parakeet TDT model files and point `transcription.parakeet.model_dir` or `HYPRWHSPR_PARAKEET_MODEL_DIR` at them.",
                 self.model_dir.display()
             );
         }
 
         if !has_vocab {
             anyhow::bail!(
-                "Parakeet TDT vocab.txt not found in {}. Run scripts/download-parakeet-tdt.sh",
+                "Parakeet TDT vocab.txt not found in {}. Download the Parakeet TDT model files and point `transcription.parakeet.model_dir` or `HYPRWHSPR_PARAKEET_MODEL_DIR` at them.",
                 self.model_dir.display()
             );
         }

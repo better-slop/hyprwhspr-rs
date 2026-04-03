@@ -43,6 +43,12 @@ pub enum CopyResult {
 
 /// Run the install command
 pub fn run_install(args: &InstallArgs) -> Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        let _ = args;
+        anyhow::bail!("`hyprwhspr-rs install` is not supported on Windows");
+    }
+
     println!();
     println!("{}", "━".repeat(70));
     println!("  hyprwhspr-rs Integration Installer");
@@ -108,10 +114,7 @@ fn interactive_select() -> Result<Vec<Component>> {
         .defaults(&[true, true, false]) // waybar + systemd on by default
         .interact()?;
 
-    Ok(selections
-        .iter()
-        .map(|&i| Component::all()[i])
-        .collect())
+    Ok(selections.iter().map(|&i| Component::all()[i]).collect())
 }
 
 fn create_directories() -> Result<()> {
@@ -212,7 +215,10 @@ pub fn find_config_dir() -> Result<PathBuf> {
         }
 
         // Check parent dir (dev layout: target/release/../..)
-        if let Some(dev_path) = exe_path.parent().and_then(|p| p.parent()).and_then(|p| p.parent())
+        if let Some(dev_path) = exe_path
+            .parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent())
         {
             if dev_path.join("config").exists() {
                 return Ok(dev_path.to_path_buf());

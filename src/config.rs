@@ -135,6 +135,10 @@ fn default_model() -> String {
 }
 
 fn default_models_dirs() -> Vec<String> {
+    if let Some(project_dirs) = directories::ProjectDirs::from("", "", "hyprwhspr-rs") {
+        return vec![project_dirs.data_dir().join("models").display().to_string()];
+    }
+
     vec!["~/.local/share/hyprwhspr-rs/models".to_string()]
 }
 
@@ -775,49 +779,59 @@ impl ConfigManager {
 
     fn discover_whisper_binary_candidates(include_fallbacks: bool) -> Vec<PathBuf> {
         let mut candidates = Vec::new();
-        let mut push_candidate = |path: PathBuf| {
-            if path.exists() && !candidates.contains(&path) {
-                candidates.push(path);
+        let mut push_candidate = |path: PathBuf, require_exists: bool| {
+            if !require_exists || path.exists() {
+                if !candidates.contains(&path) {
+                    candidates.push(path);
+                }
             }
         };
+
+        if let Some(path) = env::var_os("HYPRWHSPR_WHISPER_CLI").map(PathBuf::from) {
+            push_candidate(path, false);
+        }
 
         // Prefer the managed local build if available (XDG-aware)
         if let Some(project_dirs) = directories::ProjectDirs::from("", "", "hyprwhspr-rs") {
             let local_dir = project_dirs.data_dir().join("whisper.cpp");
             let build_bin = local_dir.join("build/bin");
 
-            push_candidate(build_bin.join("whisper-cli"));
-            push_candidate(local_dir.join("whisper-cli"));
+            for name in Self::whisper_binary_names(false) {
+                push_candidate(build_bin.join(name), true);
+                push_candidate(local_dir.join(name), true);
+            }
             if include_fallbacks {
-                push_candidate(build_bin.join("main"));
-                push_candidate(build_bin.join("whisper"));
-                push_candidate(local_dir.join("main"));
-                push_candidate(local_dir.join("whisper"));
+                for name in Self::whisper_binary_names(true) {
+                    push_candidate(build_bin.join(name), true);
+                    push_candidate(local_dir.join(name), true);
+                }
             }
         }
 
         // Compatibility: legacy managed build under $HOME
-        if let Ok(home) = env::var("HOME") {
-            let local_dir = PathBuf::from(home).join(".local/share/hyprwhspr-rs/whisper.cpp");
+        if let Some(home) = Self::home_dir() {
+            let local_dir = home.join(".local/share/hyprwhspr-rs/whisper.cpp");
             let build_bin = local_dir.join("build/bin");
 
-            push_candidate(build_bin.join("whisper-cli"));
-            push_candidate(local_dir.join("whisper-cli"));
+            for name in Self::whisper_binary_names(false) {
+                push_candidate(build_bin.join(name), true);
+                push_candidate(local_dir.join(name), true);
+            }
             if include_fallbacks {
-                push_candidate(build_bin.join("main"));
-                push_candidate(build_bin.join("whisper"));
-                push_candidate(local_dir.join("main"));
-                push_candidate(local_dir.join("whisper"));
+                for name in Self::whisper_binary_names(true) {
+                    push_candidate(build_bin.join(name), true);
+                    push_candidate(local_dir.join(name), true);
+                }
             }
         }
 
         // Prefer PATH discovery for system-installed binaries (covers /usr/bin, nix profiles, etc.)
-        for path in Self::find_binaries_on_path(&["whisper-cli"]) {
-            push_candidate(path);
+        for path in Self::find_binaries_on_path(&Self::whisper_binary_names(false)) {
+            push_candidate(path, true);
         }
         if include_fallbacks {
-            for path in Self::find_binaries_on_path(&["whisper", "main"]) {
-                push_candidate(path);
+            for path in Self::find_binaries_on_path(&Self::whisper_binary_names(true)) {
+                push_candidate(path, true);
             }
         }
 
@@ -839,6 +853,30 @@ impl ConfigManager {
             }
         }
         out
+    }
+
+    fn whisper_binary_names(include_fallbacks: bool) -> Vec<&'static str> {
+        let mut names = if cfg!(windows) {
+            vec!["whisper-cli.exe"]
+        } else {
+            vec!["whisper-cli"]
+        };
+
+        if include_fallbacks {
+            if cfg!(windows) {
+                names.extend(["whisper.exe", "main.exe"]);
+            } else {
+                names.extend(["whisper", "main"]);
+            }
+        }
+
+        names
+    }
+
+    fn home_dir() -> Option<PathBuf> {
+        env::var_os("HOME")
+            .or_else(|| env::var_os("USERPROFILE"))
+            .map(PathBuf::from)
     }
 
     fn discover_assets_dir() -> PathBuf {
@@ -1009,6 +1047,12 @@ impl ConfigManager {
     fn model_search_dirs(config: &Config) -> Vec<PathBuf> {
         let mut dirs = Vec::new();
 
+        if let Some(path) = env::var_os("HYPRWHSPR_WHISPER_MODEL_DIR").map(PathBuf::from) {
+            if !dirs.contains(&path) {
+                dirs.push(path);
+            }
+        }
+
         // Add custom models directories from config (with path expansion)
         for dir_str in &config.transcription.whisper_cpp.models_dirs {
             let trimmed = dir_str.trim();
@@ -1022,13 +1066,14 @@ impl ConfigManager {
         }
 
         // Add system default paths as fallback
-        let system_models = PathBuf::from("/usr/share/whisper/models");
-        if system_models.exists() {
-            dirs.push(system_models);
+        if cfg!(not(windows)) {
+            let system_models = PathBuf::from("/usr/share/whisper/models");
+            if system_models.exists() {
+                dirs.push(system_models);
+            }
         }
-        if let Ok(home) = env::var("HOME") {
-            let legacy_path =
-                PathBuf::from(home).join(".local/share/hyprwhspr-rs/whisper.cpp/models");
+        if let Some(home) = Self::home_dir() {
+            let legacy_path = home.join(".local/share/hyprwhspr-rs/whisper.cpp/models");
             if legacy_path.exists() {
                 dirs.push(legacy_path);
             }
@@ -1138,6 +1183,48 @@ mod tests {
 
         assert!(candidates.contains(&fake));
         fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    #[test]
+    fn whisper_binary_candidates_include_env_override() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+
+        let fake = std::env::temp_dir().join(format!(
+            "hyprwhspr-whisper-cli-override-{}",
+            std::process::id()
+        ));
+        let old = std::env::var_os("HYPRWHSPR_WHISPER_CLI");
+        std::env::set_var("HYPRWHSPR_WHISPER_CLI", fake.as_os_str());
+
+        let candidates = ConfigManager::discover_whisper_binary_candidates(false);
+
+        match old {
+            Some(v) => std::env::set_var("HYPRWHSPR_WHISPER_CLI", v),
+            None => std::env::remove_var("HYPRWHSPR_WHISPER_CLI"),
+        }
+
+        assert_eq!(candidates.first(), Some(&fake));
+    }
+
+    #[test]
+    fn model_search_dirs_include_env_override() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+
+        let fake = std::env::temp_dir().join(format!(
+            "hyprwhspr-whisper-model-override-{}",
+            std::process::id()
+        ));
+        let old = std::env::var_os("HYPRWHSPR_WHISPER_MODEL_DIR");
+        std::env::set_var("HYPRWHSPR_WHISPER_MODEL_DIR", fake.as_os_str());
+
+        let dirs = ConfigManager::model_search_dirs(&Config::default());
+
+        match old {
+            Some(v) => std::env::set_var("HYPRWHSPR_WHISPER_MODEL_DIR", v),
+            None => std::env::remove_var("HYPRWHSPR_WHISPER_MODEL_DIR"),
+        }
+
+        assert_eq!(dirs.first(), Some(&fake));
     }
 
     #[test]

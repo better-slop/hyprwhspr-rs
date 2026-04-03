@@ -84,6 +84,7 @@ Notes:
 
 - The installer writes the systemd unit with an absolute `ExecStart=` pointing at the `hyprwhspr-rs` binary you ran `hyprwhspr-rs install` with. If you copy the unit template manually, ensure `hyprwhspr-rs` is resolvable by systemd (PATH / drop-in override).
 - If audio start/stop sounds are missing in your packaging setup, you can point the app at an installed assets directory with `HYPRWHSPR_ASSETS_DIR=/path/to/assets`.
+- `hyprwhspr-rs install` is Linux-only. On Windows, configure startup/environment manually.
 
 ### Using Nix
 
@@ -258,6 +259,28 @@ Use <code>transcription.provider</code> in <code>~/.config/hyprwhspr-rs/config.j
 - gemini provider <strong>requires</strong>: <code>GEMINI_API_KEY</code>
 - whisper_cpp (whisper-cli) <strong>does not require an API key; the binary is discovered via <code>PATH</code> and managed locations under <code>$XDG_DATA_HOME</code> / <code>$HOME</code></strong>
 
+#### Cross-platform env file loading
+
+At startup, hyprwhspr-rs loads env vars from:
+
+- <code>HYPRWHSPR_ENV_FILE</code> (if set)
+- the app config dir’s <code>.env</code>
+- the app config dir’s legacy <code>env</code>
+- the current working directory’s <code>.env</code>
+
+Existing process env vars win; env files only fill in missing values.
+
+This makes the same setup work on Linux and Windows:
+
+```dotenv
+GROQ_API_KEY=...
+GEMINI_API_KEY=...
+HYPRWHSPR_WHISPER_CLI=/path/to/whisper-cli
+HYPRWHSPR_WHISPER_MODEL_DIR=/path/to/whisper-models
+HYPRWHSPR_PARAKEET_MODEL_DIR=/path/to/parakeet-tdt-0.6b-v3-onnx
+HYPRWHSPR_ASSETS_DIR=/path/to/assets
+```
+
 #### Recommended setup (systemd user service)
 
 <code>hyprwhspr-rs install</code> installs a user unit with:
@@ -269,8 +292,11 @@ Use <code>transcription.provider</code> in <code>~/.config/hyprwhspr-rs/config.j
 #### Extra env vars that affect provider behavior
 
 - For <code>whisper_cpp</code> / <code>whisper-cli</code> discovery, the app also consults:
+  - <code>HYPRWHSPR_WHISPER_CLI</code> (explicit binary override)
+  - <code>HYPRWHSPR_WHISPER_MODEL_DIR</code> (extra model search dir)
   - <code>PATH</code> (searches for <code>whisper-cli</code>, optional fallback names)
   - <code>XDG_DATA_HOME</code> / <code>HOME</code> (managed whisper.cpp locations)
+- For Parakeet model overrides: <code>HYPRWHSPR_PARAKEET_MODEL_DIR</code>
 - For asset overrides (start/stop sounds): <code>HYPRWHSPR_ASSETS_DIR</code>
 - Resolution logic lives in:
   - <code>src/config.rs</code> (<code>discover_whisper_binary_candidates</code>, <code>find_binaries_on_path</code>, <code>discover_assets_dir</code>)

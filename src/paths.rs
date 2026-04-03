@@ -5,7 +5,7 @@ use std::path::PathBuf;
 pub fn expand_tilde(path: &str) -> PathBuf {
     let trimmed = path.trim();
     if trimmed.starts_with("~/") {
-        if let Ok(home) = env::var("HOME") {
+        if let Some(home) = env::var_os("HOME").or_else(|| env::var_os("USERPROFILE")) {
             return PathBuf::from(home).join(&trimmed[2..]);
         }
     }

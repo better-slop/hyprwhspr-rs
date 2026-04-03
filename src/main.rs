@@ -5,7 +5,7 @@ use hyprwhspr_rs::{
     config::TranscriptionProvider,
     install,
     logging::TextPipelineFormatter,
-    ConfigManager, HyprwhsprApp,
+    runtime_env, ConfigManager, HyprwhsprApp,
 };
 use tokio::signal;
 use tracing::info;
@@ -14,6 +14,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    runtime_env::load_env_files()?;
 
     // Handle install command before initializing logging (it has its own output)
     if let Some(Command::Install(args)) = cli.command {
