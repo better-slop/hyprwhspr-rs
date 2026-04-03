@@ -3,8 +3,12 @@ pub mod systemd;
 pub mod waybar;
 
 use crate::cli::InstallArgs;
-use anyhow::{Context, Result};
-use dialoguer::{console::Style, theme::ColorfulTheme, Confirm, MultiSelect};
+use anyhow::Result;
+#[cfg(not(target_os = "windows"))]
+use anyhow::Context;
+use dialoguer::Confirm;
+#[cfg(not(target_os = "windows"))]
+use dialoguer::{console::Style, theme::ColorfulTheme, MultiSelect};
 use owo_colors::OwoColorize;
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
