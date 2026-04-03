@@ -42,16 +42,15 @@ pub enum CopyResult {
 }
 
 /// Run the install command
+#[cfg(target_os = "windows")]
 pub fn run_install(args: &InstallArgs) -> Result<()> {
-    #[cfg(target_os = "windows")]
-    {
-        let _ = args;
-        anyhow::bail!("`hyprwhspr-rs install` is not supported on Windows");
-    }
-
-    #[cfg(not(target_os = "windows"))]
     let _ = args;
+    anyhow::bail!("`hyprwhspr-rs install` is not supported on Windows");
+}
 
+/// Run the install command
+#[cfg(not(target_os = "windows"))]
+pub fn run_install(args: &InstallArgs) -> Result<()> {
     println!();
     println!("{}", "━".repeat(70));
     println!("  hyprwhspr-rs Integration Installer");
