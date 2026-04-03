@@ -31,9 +31,10 @@ fn default_config_round_trips() {
 fn default_config_includes_models_dir() {
     let config = Config::default();
 
-    assert_eq!(
-        config.transcription.whisper_cpp.models_dirs,
-        vec!["~/.local/share/hyprwhspr-rs/models".to_string()]
+    assert_eq!(config.transcription.whisper_cpp.models_dirs.len(), 1);
+    assert!(
+        config.transcription.whisper_cpp.models_dirs[0].ends_with("hyprwhspr-rs/models"),
+        "default models dir should resolve under the app data dir"
     );
 }
 

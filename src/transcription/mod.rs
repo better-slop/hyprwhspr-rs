@@ -105,8 +105,11 @@ impl TranscriptionBackend {
                 {
                     let prompt = Self::prompt_for(config, TranscriptionProvider::Parakeet);
                     let par_cfg = &config.transcription.parakeet;
-
-                    let expanded = expand_tilde(&par_cfg.model_dir);
+                    let model_dir_ref = env::var("HYPRWHSPR_PARAKEET_MODEL_DIR")
+                        .ok()
+                        .filter(|value| !value.trim().is_empty())
+                        .unwrap_or_else(|| par_cfg.model_dir.clone());
+                    let expanded = expand_tilde(&model_dir_ref);
                     let model_dir = if expanded.is_relative() {
                         directories::ProjectDirs::from("", "", "hyprwhspr-rs")
                             .map(|dirs| dirs.data_dir().join(&expanded))

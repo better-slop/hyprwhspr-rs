@@ -3,8 +3,13 @@ pub mod systemd;
 pub mod waybar;
 
 use crate::cli::InstallArgs;
-use anyhow::{Context, Result};
-use dialoguer::{console::Style, theme::ColorfulTheme, Confirm, MultiSelect};
+use anyhow::Result;
+#[cfg(not(target_os = "windows"))]
+use anyhow::Context;
+use dialoguer::Confirm;
+use dialoguer::theme::ColorfulTheme;
+#[cfg(not(target_os = "windows"))]
+use dialoguer::{console::Style, MultiSelect};
 use owo_colors::OwoColorize;
 use std::io::{self, IsTerminal};
 use std::path::{Path, PathBuf};
@@ -42,6 +47,14 @@ pub enum CopyResult {
 }
 
 /// Run the install command
+#[cfg(target_os = "windows")]
+pub fn run_install(args: &InstallArgs) -> Result<()> {
+    let _ = args;
+    anyhow::bail!("`hyprwhspr-rs install` is not supported on Windows");
+}
+
+/// Run the install command
+#[cfg(not(target_os = "windows"))]
 pub fn run_install(args: &InstallArgs) -> Result<()> {
     println!();
     println!("{}", "━".repeat(70));
@@ -91,6 +104,7 @@ pub fn run_install(args: &InstallArgs) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(target_os = "windows"))]
 fn interactive_select() -> Result<Vec<Component>> {
     let items: Vec<&str> = Component::all().iter().map(|c| c.label()).collect();
 
@@ -108,12 +122,10 @@ fn interactive_select() -> Result<Vec<Component>> {
         .defaults(&[true, true, false]) // waybar + systemd on by default
         .interact()?;
 
-    Ok(selections
-        .iter()
-        .map(|&i| Component::all()[i])
-        .collect())
+    Ok(selections.iter().map(|&i| Component::all()[i]).collect())
 }
 
+#[cfg(not(target_os = "windows"))]
 fn create_directories() -> Result<()> {
     let dirs = [
         xdg_cache_home().join("hyprwhspr-rs"),
@@ -129,6 +141,7 @@ fn create_directories() -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(target_os = "windows"))]
 fn print_summary(components: &[Component]) {
     println!();
     println!("{}", "━".repeat(70));
@@ -212,7 +225,10 @@ pub fn find_config_dir() -> Result<PathBuf> {
         }
 
         // Check parent dir (dev layout: target/release/../..)
-        if let Some(dev_path) = exe_path.parent().and_then(|p| p.parent()).and_then(|p| p.parent())
+        if let Some(dev_path) = exe_path
+            .parent()
+            .and_then(|p| p.parent())
+            .and_then(|p| p.parent())
         {
             if dev_path.join("config").exists() {
                 return Ok(dev_path.to_path_buf());
