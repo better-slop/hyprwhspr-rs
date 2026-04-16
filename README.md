@@ -64,14 +64,8 @@ For Hyprland, the cleaner approach is to let the compositor own shortcut capture
 ```ini
 bind = ALT, grave, exec, hyprwhspr-rs record start
 bindr = ALT, grave, exec, hyprwhspr-rs record stop
-bind = SUPER, D, exec, hyprwhspr-rs record toggle
+bind = ALT, SPACE, exec, hyprwhspr-rs record toggle
 ```
-
-Notes:
-
-- `record` commands talk to the already-running daemon over a local control socket; they do not boot a second recorder process.
-- This is the preferred Hyprland path when a shortcut like `ALT+SPACE` causes stray keypresses in the focused app.
-- The existing `shortcuts.press` / `shortcuts.hold` config still works as a fallback listener path.
 
 ## Installation
 
@@ -157,10 +151,24 @@ With NixOS:
 ```
 
 ## Configuration
+<details>
+    <summary>
+        <strong>Example hyprland bindings config</strong>
+        <p>Configure in, e.g., ~/.config/hypr/hyprland.conf</p>
+    </summary>
 
+```ini
+# hold
+bind = ALT, GRAVE, exec, hyprwhspr-rs record start
+bindr = ALT, GRAVE, exec, hyprwhspr-rs record stop
+
+# tap
+bind = ALT, SPACE, exec, hyprwhspr-rs record toggle
+```
+</details>
 <details>
   <summary>
-    <strong>Example config</strong>
+    <strong>Example hyprwhspr-rs config</strong>
     <p>Configure in ~/.config/hyprwhspr-rs/config.jsonc</p>
   </summary>
 
