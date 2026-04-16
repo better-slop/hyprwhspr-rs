@@ -41,7 +41,7 @@ wl-clipboard-rs = "0.9"
 wrtype = "0.1"
 
 # Parakeet TDT (NVIDIA ASR)
-parakeet-rs = { version = "0.2.7", optional = true }
+parakeet-rs = { version = "0.3.4", optional = true }
 
 # Logging
 tracing = "0.1"
