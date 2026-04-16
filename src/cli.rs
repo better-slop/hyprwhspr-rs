@@ -1,7 +1,11 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "hyprwhspr-rs", version, about = "Native speech-to-text voice dictation for Hyprland")]
+#[command(
+    name = "hyprwhspr-rs",
+    version,
+    about = "Native speech-to-text voice dictation for Hyprland"
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
@@ -15,6 +19,8 @@ pub struct Cli {
 pub enum Command {
     /// Install integration components (waybar, systemd, elephant)
     Install(InstallArgs),
+    /// Control the running recorder daemon
+    Record(RecordArgs),
 }
 
 #[derive(clap::Args)]
@@ -45,4 +51,22 @@ impl InstallArgs {
     pub fn has_specific_flags(&self) -> bool {
         self.waybar || self.service || self.elephant || self.all
     }
+}
+
+#[derive(clap::Args)]
+pub struct RecordArgs {
+    #[command(subcommand)]
+    pub action: RecordAction,
+}
+
+#[derive(Clone, Copy, Debug, Subcommand)]
+pub enum RecordAction {
+    /// Start recording if idle
+    Start,
+    /// Stop recording if active
+    Stop,
+    /// Toggle between idle and recording
+    Toggle,
+    /// Print current recorder state
+    Status,
 }

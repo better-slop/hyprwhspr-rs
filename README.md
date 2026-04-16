@@ -52,7 +52,24 @@ https://github.com/user-attachments/assets/bbbaa1c3-1a7e-4165-ad3d-27b7465e201a
 - Detects Hyprland via `HYPRLAND_INSTANCE_SIGNATURE` and opens the IPC socket at `$XDG_RUNTIME_DIR/hypr/<signature>/.socket.sock`.
 - Execs `dispatch sendshortcut` commands against the active window to paste dictated text, inspecting `activewindow` to decide when `Shift` is required for a hardcoded list of programs.
 - Falls back to a Wayland virtual keyboard client or a simulated keypress paste if IPC communication fails.
+- Supports daemon control commands via `hyprwhspr-rs record {start|stop|toggle|status}` so Hyprland can own shortcut capture with `bind` / `bindr`.
 - **See the [example docs](https://github.com/better-slop/hyprwhspr-rs/tree/main/docs/examples) for additional integration paths outside of Waybar and Walker/Elephant.**
+
+### Hyprland capture-first binds
+
+If you want Hyprland to capture the activation combo instead of the focused app seeing it too, keep `hyprwhspr-rs` running in the background and bind the new recorder commands directly:
+
+```ini
+bind = ALT, SPACE, exec, hyprwhspr-rs record start
+bindr = ALT, SPACE, exec, hyprwhspr-rs record stop
+bind = SUPER, D, exec, hyprwhspr-rs record toggle
+```
+
+Notes:
+
+- `record` commands talk to the already-running daemon over a local control socket; they do not boot a second recorder process.
+- This is the preferred Hyprland path when a shortcut like `ALT+SPACE` causes stray keypresses in the focused app.
+- The existing `shortcuts.press` / `shortcuts.hold` config still works as a fallback listener path.
 
 ## Installation
 

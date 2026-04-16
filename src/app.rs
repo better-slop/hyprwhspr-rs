@@ -13,6 +13,7 @@ use crate::audio::{
 };
 use crate::benchmark::BenchmarkRecorder;
 use crate::config::{Config, ConfigManager, ShortcutsConfig, TranscriptionProvider};
+use crate::control::{ControlRequest, ControlServer, RecordCommand, RecorderState};
 use crate::input::{GlobalShortcuts, ShortcutEvent, ShortcutKind, ShortcutPhase, TextInjector};
 use crate::status::{StatusWriter, WaybarState};
 use crate::transcription::{TranscriptionBackend, TranscriptionResult};
@@ -125,6 +126,7 @@ impl Drop for ShortcutListener {
 enum RecordingTrigger {
     HoldShortcut,
     PressShortcut,
+    ExternalCommand,
 }
 
 #[derive(Debug, Clone)]
@@ -177,6 +179,8 @@ pub struct HyprwhsprApp {
     status_writer: StatusWriter,
     shortcut_tx: mpsc::Sender<ShortcutEvent>,
     shortcut_rx: Option<mpsc::Receiver<ShortcutEvent>>,
+    control_tx: mpsc::Sender<ControlRequest>,
+    control_rx: Option<mpsc::Receiver<ControlRequest>>,
     press_listener: Option<ShortcutListener>,
     hold_listener: Option<ShortcutListener>,
     current_config: Config,
@@ -230,6 +234,7 @@ impl HyprwhsprApp {
         status_writer.set_state(WaybarState::Inactive, "Ready")?;
 
         let (shortcut_tx, shortcut_rx) = mpsc::channel(10);
+        let (control_tx, control_rx) = mpsc::channel(10);
 
         let fast_vad = if fast_vad_allowed(&config) {
             FastVad::maybe_new(&config.fast_vad, audio_capture.sample_rate_hint())
@@ -262,6 +267,8 @@ impl HyprwhsprApp {
             status_writer,
             shortcut_tx,
             shortcut_rx: Some(shortcut_rx),
+            control_tx,
+            control_rx: Some(control_rx),
             press_listener: None,
             hold_listener: None,
             current_config: config,
@@ -279,6 +286,11 @@ impl HyprwhsprApp {
             .shortcut_rx
             .take()
             .expect("shortcut receiver already consumed");
+        let mut control_rx = self
+            .control_rx
+            .take()
+            .expect("control receiver already consumed");
+        let _control_server = ControlServer::spawn(self.control_tx.clone())?;
         self.ensure_shortcut_listeners(self.current_config.shortcuts.clone())?;
         self.log_shortcut_configuration(&self.current_config.shortcuts);
 
@@ -295,6 +307,15 @@ impl HyprwhsprApp {
                         }
                         None => {
                             info!("Shortcut channel closed");
+                            break;
+                        }
+                    }
+                }
+                request = control_rx.recv() => {
+                    match request {
+                        Some(request) => self.handle_control_request(request).await,
+                        None => {
+                            info!("Control channel closed");
                             break;
                         }
                     }
@@ -474,30 +495,12 @@ impl HyprwhsprApp {
     async fn handle_shortcut(&mut self, event: ShortcutEvent) -> Result<()> {
         match (event.kind, event.phase) {
             (ShortcutKind::Press, ShortcutPhase::Start) => {
-                if self.is_processing {
-                    warn!("Still processing previous recording, ignoring shortcut");
-                    return Ok(());
-                }
-
-                if self.recording_session.is_some() {
-                    self.stop_recording(event.triggered_at).await?;
-                } else {
-                    self.start_recording(RecordingTrigger::PressShortcut, event.triggered_at)
-                        .await?;
-                }
+                self.toggle_recording(RecordingTrigger::PressShortcut, event.triggered_at)
+                    .await?;
             }
             (ShortcutKind::Hold, ShortcutPhase::Start) => {
-                if self.is_processing {
-                    warn!("Still processing previous recording, ignoring hold shortcut");
-                    return Ok(());
-                }
-
-                if self.recording_session.is_some() {
-                    debug!("Hold shortcut ignored because recording is already active");
-                } else {
-                    self.start_recording(RecordingTrigger::HoldShortcut, event.triggered_at)
-                        .await?;
-                }
+                self.start_recording_if_idle(RecordingTrigger::HoldShortcut, event.triggered_at)
+                    .await?;
             }
             (ShortcutKind::Hold, ShortcutPhase::End) => {
                 if matches!(self.recording_trigger, Some(RecordingTrigger::HoldShortcut))
@@ -509,6 +512,95 @@ impl HyprwhsprApp {
                 }
             }
             _ => {}
+        }
+
+        Ok(())
+    }
+
+    async fn handle_control_request(&mut self, request: ControlRequest) {
+        let result = self
+            .execute_record_command(request.command)
+            .await
+            .map_err(|err| format!("{err:#}"));
+
+        if request.reply_tx.send(result).is_err() {
+            debug!("Control client disconnected before receiving response");
+        }
+    }
+
+    async fn execute_record_command(&mut self, command: RecordCommand) -> Result<RecorderState> {
+        let now = Instant::now();
+
+        match command {
+            RecordCommand::Start => {
+                self.start_recording_if_idle(RecordingTrigger::ExternalCommand, now)
+                    .await?;
+            }
+            RecordCommand::Stop => {
+                self.stop_recording_if_active(now).await?;
+            }
+            RecordCommand::Toggle => {
+                self.toggle_recording(RecordingTrigger::ExternalCommand, now)
+                    .await?;
+            }
+            RecordCommand::Status => {}
+        }
+
+        Ok(self.current_state())
+    }
+
+    fn current_state(&self) -> RecorderState {
+        if self.is_processing {
+            RecorderState::Processing
+        } else if self.recording_session.is_some() {
+            RecorderState::Recording
+        } else {
+            RecorderState::Inactive
+        }
+    }
+
+    async fn start_recording_if_idle(
+        &mut self,
+        trigger: RecordingTrigger,
+        triggered_at: Instant,
+    ) -> Result<()> {
+        if self.is_processing {
+            warn!("Still processing previous recording, ignoring start request");
+            return Ok(());
+        }
+
+        if self.recording_session.is_some() {
+            debug!("Start request ignored because recording is already active");
+            return Ok(());
+        }
+
+        self.start_recording(trigger, triggered_at).await
+    }
+
+    async fn stop_recording_if_active(&mut self, triggered_at: Instant) -> Result<()> {
+        if self.recording_session.is_some() {
+            self.stop_recording(triggered_at).await?;
+        } else {
+            debug!("Stop request ignored because recording is not active");
+        }
+
+        Ok(())
+    }
+
+    async fn toggle_recording(
+        &mut self,
+        trigger: RecordingTrigger,
+        triggered_at: Instant,
+    ) -> Result<()> {
+        if self.is_processing {
+            warn!("Still processing previous recording, ignoring toggle request");
+            return Ok(());
+        }
+
+        if self.recording_session.is_some() {
+            self.stop_recording(triggered_at).await?;
+        } else {
+            self.start_recording(trigger, triggered_at).await?;
         }
 
         Ok(())
