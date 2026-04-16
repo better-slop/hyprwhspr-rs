@@ -8,6 +8,7 @@ Hyprwhspr-rs currently ships with three main integrations: a [Hyprland](https://
 
 - `${XDG_CACHE_HOME}/hyprwhspr-rs/status.json` (fallback: `/tmp/hyprwhspr-rs/status.json`)
   
+  this is exactly
   ```jsonc
   {
     // Atomic write: status.json.tmp -> status.json (inotify-friendly).

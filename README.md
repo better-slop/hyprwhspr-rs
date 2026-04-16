@@ -52,7 +52,20 @@ https://github.com/user-attachments/assets/bbbaa1c3-1a7e-4165-ad3d-27b7465e201a
 - Detects Hyprland via `HYPRLAND_INSTANCE_SIGNATURE` and opens the IPC socket at `$XDG_RUNTIME_DIR/hypr/<signature>/.socket.sock`.
 - Execs `dispatch sendshortcut` commands against the active window to paste dictated text, inspecting `activewindow` to decide when `Shift` is required for a hardcoded list of programs.
 - Falls back to a Wayland virtual keyboard client or a simulated keypress paste if IPC communication fails.
+- Supports daemon control commands via `hyprwhspr-rs record {start|stop|toggle|status}` so Hyprland can own shortcut capture with `bind` / `bindr`.
 - **See the [example docs](https://github.com/better-slop/hyprwhspr-rs/tree/main/docs/examples) for additional integration paths outside of Waybar and Walker/Elephant.**
+
+### Hyprland capture-first binds
+
+The Linux Kernel treats input grabbing as an exclusive operation. If `hyprwhspr-rs` were to grab a keyboard device directly with `EVIOCGRAB`, it would become the sole recipient of that device's events until the grab was released. That is the wrong layer for push-to-talk dictation because it would require re-injecting every non-shortcut keypress through a virtual keyboard just to preserve normal typing.
+
+For Hyprland, the cleaner approach is to let the compositor own shortcut capture and have `hyprwhspr-rs` expose recorder controls over a local socket. In practice, that means keeping the daemon running in the background and binding `record start` / `record stop` / `record toggle` directly in Hyprland:
+
+```ini
+bind = ALT, grave, exec, hyprwhspr-rs record start
+bindr = ALT, grave, exec, hyprwhspr-rs record stop
+bind = ALT, SPACE, exec, hyprwhspr-rs record toggle
+```
 
 ## Installation
 
@@ -138,10 +151,24 @@ With NixOS:
 ```
 
 ## Configuration
+<details>
+    <summary>
+        <strong>Example hyprland bindings config</strong>
+        <p>Configure in, e.g., ~/.config/hypr/hyprland.conf</p>
+    </summary>
 
+```ini
+# hold
+bind = ALT, GRAVE, exec, hyprwhspr-rs record start
+bindr = ALT, GRAVE, exec, hyprwhspr-rs record stop
+
+# tap
+bind = ALT, SPACE, exec, hyprwhspr-rs record toggle
+```
+</details>
 <details>
   <summary>
-    <strong>Example config</strong>
+    <strong>Example hyprwhspr-rs config</strong>
     <p>Configure in ~/.config/hyprwhspr-rs/config.jsonc</p>
   </summary>
 
