@@ -57,11 +57,13 @@ https://github.com/user-attachments/assets/bbbaa1c3-1a7e-4165-ad3d-27b7465e201a
 
 ### Hyprland capture-first binds
 
-If you want Hyprland to capture the activation combo instead of the focused app seeing it too, keep `hyprwhspr-rs` running in the background and bind the new recorder commands directly:
+The Linux Kernel treats input grabbing as an exclusive operation. If `hyprwhspr-rs` were to grab a keyboard device directly with `EVIOCGRAB`, it would become the sole recipient of that device's events until the grab was released. That is the wrong layer for push-to-talk dictation because it would require re-injecting every non-shortcut keypress through a virtual keyboard just to preserve normal typing.
+
+For Hyprland, the cleaner approach is to let the compositor own shortcut capture and have `hyprwhspr-rs` expose recorder controls over a local socket. In practice, that means keeping the daemon running in the background and binding `record start` / `record stop` / `record toggle` directly in Hyprland:
 
 ```ini
-bind = ALT, SPACE, exec, hyprwhspr-rs record start
-bindr = ALT, SPACE, exec, hyprwhspr-rs record stop
+bind = ALT, grave, exec, hyprwhspr-rs record start
+bindr = ALT, grave, exec, hyprwhspr-rs record stop
 bind = SUPER, D, exec, hyprwhspr-rs record toggle
 ```
 
