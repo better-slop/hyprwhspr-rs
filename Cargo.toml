@@ -1,6 +1,6 @@
 [package]
 name = "hyprwhspr-rs"
-version = "0.3.25"
+version = "0.3.26"
 edition = "2021"
 authors = ["hyprwhspr-rs contributors"]
 description = "Native speech-to-text voice dictation for Hyprland (Rust implementation)"
