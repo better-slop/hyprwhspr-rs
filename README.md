@@ -152,6 +152,9 @@ With NixOS:
 ```
 
 ## Configuration
+
+In `~/.config/hyprwhspr-rs/config.jsonc`, you may use `"$schema": "https://raw.githubusercontent.com/better-slop/hyprwhspr-rs/<vX.X.X|main>/config/schema.json"` to validate your config.
+
 <details>
     <summary>
         <strong>Example hyprland bindings config</strong>
