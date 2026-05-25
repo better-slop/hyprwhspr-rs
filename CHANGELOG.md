@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.3.28] (https://github.com/better-slop/hyprwhspr-rs/compare/v0.3.27...v0.3.28) - 2026-05-25
+
+### Features
+- custom providers/openai compat ([#130](https://github.com/better-slop/hyprwhspr-rs/pull/130))
+
 ## [0.3.27] (https://github.com/better-slop/hyprwhspr-rs/compare/v0.3.26...v0.3.27) - 2026-05-09
 
 ### Chores
