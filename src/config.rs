@@ -2,6 +2,7 @@ use crate::paths::expand_tilde;
 use crate::transcription::DEFAULT_PROMPT;
 use anyhow::{anyhow, Context, Result};
 use jsonc_parser::{parse_to_serde_value, ParseOptions};
+use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -14,7 +15,12 @@ use std::time::{Duration, SystemTime};
 use tokio::sync::watch;
 use tokio::time;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub fn generated_schema_json() -> Result<String> {
+    let schema = schemars::schema_for!(Config);
+    serde_json::to_string_pretty(&schema).context("Failed to serialize config JSON schema")
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct ShortcutsConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hold: Option<String>,
@@ -32,7 +38,7 @@ impl Default for ShortcutsConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(default)]
 pub struct PasteHintsConfig {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -51,7 +57,7 @@ impl Default for PasteHintsConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct Config {
     #[serde(default = "default_primary_shortcut", skip_serializing)]
     pub primary_shortcut: String,
@@ -263,7 +269,7 @@ fn default_fast_vad_volatility_decrease_threshold() -> f32 {
     0.12
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(default)]
 pub struct VadConfig {
     pub enabled: bool,
@@ -296,7 +302,7 @@ impl Default for VadConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum FastVadProfileConfig {
     Quality,
@@ -311,7 +317,7 @@ impl Default for FastVadProfileConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(default)]
 pub struct FastVadConfig {
     pub enabled: bool,
@@ -406,7 +412,27 @@ impl<'de> Deserialize<'de> for TranscriptionProvider {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+impl JsonSchema for TranscriptionProvider {
+    fn schema_name() -> Cow<'static, str> {
+        "TranscriptionProvider".into()
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "type": "string",
+            "anyOf": [
+                {
+                    "enum": ["whisper_cpp", "groq", "gemini", "parakeet"]
+                },
+                {
+                    "pattern": "^custom\\.[A-Za-z0-9_-]+$"
+                }
+            ]
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(default)]
 pub struct WhisperCppConfig {
     pub prompt: String,
@@ -434,7 +460,7 @@ impl Default for WhisperCppConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(default)]
 pub struct GroqConfig {
     pub model: String,
@@ -452,7 +478,7 @@ impl Default for GroqConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(default)]
 pub struct GeminiConfig {
     pub model: String,
@@ -479,7 +505,7 @@ fn default_parakeet_model_dir() -> String {
     "models/parakeet/parakeet-tdt-0.6b-v3-onnx".to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(default)]
 pub struct ParakeetConfig {
     pub model_dir: String,
@@ -495,14 +521,14 @@ impl Default for ParakeetConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CustomProviderKind {
     #[serde(rename = "openai_audio_transcriptions")]
     OpenAiAudioTranscriptions,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(default)]
 pub struct ValueSource {
     pub env: Option<String>,
@@ -538,7 +564,7 @@ impl ValueSource {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(default)]
 pub struct SecretSource {
     pub env: Option<String>,
@@ -599,7 +625,7 @@ impl SecretSource {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(default)]
 pub struct CustomProviderConfig {
     pub kind: CustomProviderKind,
@@ -631,7 +657,7 @@ impl Default for CustomProviderConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(default)]
 pub struct TranscriptionConfig {
     pub provider: TranscriptionProvider,

@@ -104,16 +104,17 @@ Notes:
 You can install the `hyprwhspr-rs` package from nixpkgs.
 
 With NixOS:
+
 ```nix
 {
   # required to listen for keyboard shortcuts
   users.users.<username>.extraGroups = [ "input" ];
-  
+
   # have it auto start as a systemd unit with
-  services.hyprwhspr-rs.enable = true; 
+  services.hyprwhspr-rs.enable = true;
   # or just add it to your systemPackages
   environment.systemPackages = [ pkgs.hyprwhspr-rs ];
-  
+
   # optional: to enable cuda (for AMD do `rocmSupport` instead of `cudaSupport`)
   # cuda is unfree so not in the default nixos build caches
   # I highly recommend adding the cuda build cache to your nixconfig https://discourse.nixos.org/t/cuda-cache-for-nix-community/56038
@@ -122,13 +123,13 @@ With NixOS:
     package = pkgs.hyprwhspr-rs.override {
       # to optimize build time you can skip enabling cudaSupport for one of these two
       # for whisper do whisper-cpp, for NVIDIA Parakeet do onnxruntime
-      whispercpp = pkgs.whisper-cpp.override { cudaSupport = true; }; 
+      whispercpp = pkgs.whisper-cpp.override { cudaSupport = true; };
       onnxruntime = pkgs.onnxruntime.override { cudaSupport = true; };
     };
   };
   # you can also enable cuda/rocm globally, but this will increase the build time for your entire system if you dont add the cuda build cache
   nixpkgs.config.cudaSupport = true;
-  
+
   # if you use groq or gemini for transcription, you can autoload their keys with
   services.hyprwhspr-rs = {
     enable = true;
@@ -152,10 +153,12 @@ With NixOS:
 ```
 
 ## Configuration
+
 <details>
     <summary>
         <strong>Example hyprland bindings config</strong>
         <p>Configure in, e.g., ~/.config/hypr/hyprland.conf</p>
+        <p>Starting with `v0.28.0`, you may use `"$schema": "https://raw.githubusercontent.com/better-slop/hyprwhspr-rs/<vX.X.X|main>/config/schema.json"` to validate your config.</p>
     </summary>
 
 ```ini
@@ -166,6 +169,7 @@ bindr = ALT, GRAVE, exec, hyprwhspr-rs record stop
 # tap
 bind = ALT, SPACE, exec, hyprwhspr-rs record toggle
 ```
+
 </details>
 <details>
   <summary>
@@ -175,6 +179,7 @@ bind = ALT, SPACE, exec, hyprwhspr-rs record toggle
 
 ```jsonc
 {
+  "$schema": "https://raw.githubusercontent.com/better-slop/hyprwhspr-rs/main/config/schema.json",
   "shortcuts": {
     "press": "SUPER+ALT+D",
     "hold": "SUPER+ALT+CTRL",
@@ -404,6 +409,7 @@ recompiling.
 4. Run using:
    - pretty logs: `RUST_LOG=debug ./target/release/hyprwhspr-rs`
    - production release: `./target/release/hyprwhspr-rs`
+5. On schema changes, run `cargo run --bin generate-schema -- config/schema.json` and commit.
 
 <details>
   <summary>
