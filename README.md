@@ -306,7 +306,7 @@ Use <code>transcription.provider</code> in <code>~/.config/hyprwhspr-rs/config.j
 
 - groq provider <strong>requires</strong>: <code>GROQ_API_KEY</code>
 - gemini provider <strong>requires</strong>: <code>GEMINI_API_KEY</code>
-- whisper_cpp (whisper-cli) <strong>does not require an API key; the binary is discovered via <code>PATH</code> and managed locations under <code>$XDG_DATA_HOME</code> / <code>$HOME</code></strong>
+- whisper_cpp (whisper-cli) <strong>does not require an API key; the binary is discovered via <code>PATH</code> and managed locations under <code> $XDG_DATA_HOME </code> / <code> $HOME </code> </strong>
 - custom providers use <code>transcription.custom.&lt;name&gt;.api_key</code>. Secret resolution prefers <code>file_env</code>, then <code>file</code>, then <code>env</code>. Empty/missing keys are allowed for no-auth local servers.
 
 #### Custom OpenAI-compatible providers
