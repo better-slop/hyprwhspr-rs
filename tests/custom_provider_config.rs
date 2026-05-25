@@ -1,6 +1,9 @@
 use hyprwhspr_rs::config::{
-    Config, CustomProviderKind, SecretSource, TranscriptionProvider, ValueSource,
+    Config, CustomProviderConfig, CustomProviderKind, SecretSource, TranscriptionProvider,
+    ValueSource,
 };
+use hyprwhspr_rs::transcription::CustomOpenAiTranscriber;
+use std::time::Duration;
 
 #[test]
 fn custom_provider_config_deserializes_requested_shape() {
@@ -109,4 +112,23 @@ fn custom_provider_round_trips() {
     let decoded: Config = serde_json::from_str(&json).expect("deserialize config");
 
     assert_eq!(decoded, config);
+}
+
+#[test]
+fn custom_provider_allows_absolute_endpoint_without_base_url() {
+    let config = CustomProviderConfig {
+        kind: CustomProviderKind::OpenAiAudioTranscriptions,
+        label: Some("Fixed URL".to_string()),
+        base_url: ValueSource::default(),
+        endpoint: "http://127.0.0.1:18080/v1/audio/transcriptions".to_string(),
+        model: "whisper-large-v3".to_string(),
+        audio_format: "wav".to_string(),
+        api_key: SecretSource::default(),
+        headers: Default::default(),
+        body: Default::default(),
+        prompt: String::new(),
+    };
+
+    CustomOpenAiTranscriber::new("fixed_url", &config, Duration::from_secs(5), 0, String::new())
+        .expect("absolute endpoint should not require base_url");
 }

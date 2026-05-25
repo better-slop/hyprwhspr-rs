@@ -34,8 +34,12 @@ impl CustomOpenAiTranscriber {
         max_retries: u32,
         prompt: String,
     ) -> Result<Self> {
-        let base_url = config.base_url.resolve("base_url")?;
-        let endpoint = resolve_endpoint(&base_url, &config.endpoint)?;
+        let endpoint = if is_absolute_endpoint(&config.endpoint) {
+            resolve_endpoint(None, &config.endpoint)?
+        } else {
+            let base_url = config.base_url.resolve("base_url")?;
+            resolve_endpoint(Some(&base_url), &config.endpoint)?
+        };
         let api_key = config.api_key.resolve("api_key")?;
 
         let client = Client::builder()
@@ -266,12 +270,17 @@ impl AudioFormat {
     }
 }
 
-fn resolve_endpoint(base_url: &str, endpoint: &str) -> Result<Url> {
-    if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
+fn is_absolute_endpoint(endpoint: &str) -> bool {
+    endpoint.starts_with("http://") || endpoint.starts_with("https://")
+}
+
+fn resolve_endpoint(base_url: Option<&str>, endpoint: &str) -> Result<Url> {
+    if is_absolute_endpoint(endpoint) {
         return Url::parse(endpoint)
             .with_context(|| format!("Invalid custom endpoint: {endpoint}"));
     }
 
+    let base_url = base_url.ok_or_else(|| anyhow::anyhow!("base_url is required"))?;
     let mut base = Url::parse(base_url)
         .with_context(|| format!("Invalid custom provider base_url: {base_url}"))?;
     if !base.path().ends_with('/') {
