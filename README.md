@@ -32,12 +32,12 @@ https://github.com/user-attachments/assets/bbbaa1c3-1a7e-4165-ad3d-27b7465e201a
 - Groq or Gemini API key (optional)
   - Use `GROQ_API_KEY` for provider `groq`
   - Use `GEMINI_API_KEY` for provider `gemini`
-  - Custom OpenAI-compatible providers can read API keys from env vars or secret files.
   - Groq with whisper is cheap (~$0.10 USD/month) and fast as hell. [[Data Controls](https://console.groq.com/settings/data-controls)]
   - Comparatively, Gemini is very slow but offers better output formatting.
 - Parakeet TDT (optional) - NVIDIA's local ASR model via ONNX
   - Run `./scripts/download-parakeet-tdt.sh` to download model files (~1.2GB)
   - Very fast, but not as accurate as whisper or Gemini
+- Custom OpenAI-compatible providers see [below](#custom-openai-compatible-providers)
 
 ## Features
 
@@ -266,6 +266,7 @@ bind = ALT, SPACE, exec, hyprwhspr-rs record toggle
       "model_dir": "models/parakeet/parakeet-tdt-0.6b-v3-onnx", // Relative to $XDG_DATA_HOME/hyprwhspr-rs (or ~/.local/share/hyprwhspr-rs)
       "prompt": "Transcribe as technical documentation with proper capitalization, acronyms, and technical terminology. Do not add punctuation.",
     },
+    // "provider": "custom.remote_whisper",
     "custom": {
       "remote_whisper": {
         "kind": "openai_audio_transcriptions",
