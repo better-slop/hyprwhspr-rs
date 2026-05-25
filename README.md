@@ -32,6 +32,7 @@ https://github.com/user-attachments/assets/bbbaa1c3-1a7e-4165-ad3d-27b7465e201a
 - Groq or Gemini API key (optional)
   - Use `GROQ_API_KEY` for provider `groq`
   - Use `GEMINI_API_KEY` for provider `gemini`
+  - Custom OpenAI-compatible providers can read API keys from env vars or secret files.
   - Groq with whisper is cheap (~$0.10 USD/month) and fast as hell. [[Data Controls](https://console.groq.com/settings/data-controls)]
   - Comparatively, Gemini is very slow but offers better output formatting.
 - Parakeet TDT (optional) - NVIDIA's local ASR model via ONNX
@@ -221,7 +222,7 @@ bind = ALT, SPACE, exec, hyprwhspr-rs record toggle
     "volatility_decrease_threshold": 0.12, // Relax profile when toggles stay below this ratio
   },
   "transcription": {
-    "provider": "whisper_cpp", // whisper_cpp | groq | gemini | parakeet
+    "provider": "whisper_cpp", // whisper_cpp | groq | gemini | parakeet | custom.<name>
     "request_timeout_secs": 45,
     "max_retries": 2,
     "whisper_cpp": {
@@ -265,6 +266,27 @@ bind = ALT, SPACE, exec, hyprwhspr-rs record toggle
       "model_dir": "models/parakeet/parakeet-tdt-0.6b-v3-onnx", // Relative to $XDG_DATA_HOME/hyprwhspr-rs (or ~/.local/share/hyprwhspr-rs)
       "prompt": "Transcribe as technical documentation with proper capitalization, acronyms, and technical terminology. Do not add punctuation.",
     },
+    "custom": {
+      "remote_whisper": {
+        "kind": "openai_audio_transcriptions",
+        "label": "Remote whisper.cpp",
+        "base_url": {
+          "env": "HYPRWHSPR_REMOTE_WHISPER_BASE_URL",
+          "value": "http://localhost:8080",
+        },
+        "endpoint": "/v1/audio/transcriptions",
+        "model": "whisper-large-v3",
+        "audio_format": "wav", // wav | flac; wav works with whisper.cpp server by default
+        "api_key": {
+          "env": "HYPRWHSPR_REMOTE_WHISPER_API_KEY",
+          "file": "/run/secrets/hyprwhspr-remote-key",
+          "file_env": "HYPRWHSPR_REMOTE_WHISPER_API_KEY_FILE",
+        },
+        "headers": {},
+        "body": {},
+        "prompt": "Transcribe as technical documentation with proper capitalization, acronyms, and technical terminology. Do not add punctuation.",
+      },
+    },
   },
 }
 ```
@@ -284,6 +306,39 @@ Use <code>transcription.provider</code> in <code>~/.config/hyprwhspr-rs/config.j
 - groq provider <strong>requires</strong>: <code>GROQ_API_KEY</code>
 - gemini provider <strong>requires</strong>: <code>GEMINI_API_KEY</code>
 - whisper_cpp (whisper-cli) <strong>does not require an API key; the binary is discovered via <code>PATH</code> and managed locations under <code>$XDG_DATA_HOME</code> / <code>$HOME</code></strong>
+- custom providers use <code>transcription.custom.&lt;name&gt;.api_key</code>. Secret resolution prefers <code>file_env</code>, then <code>file</code>, then <code>env</code>. Empty/missing keys are allowed for no-auth local servers.
+
+#### Custom OpenAI-compatible providers
+
+Set <code>transcription.provider</code> to <code>custom.&lt;name&gt;</code>, then define <code>transcription.custom.&lt;name&gt;</code>.
+
+```jsonc
+"transcription": {
+  "provider": "custom.remote_whisper",
+  "custom": {
+    "remote_whisper": {
+      "kind": "openai_audio_transcriptions",
+      "label": "Remote whisper.cpp",
+      "base_url": {
+        "env": "HYPRWHSPR_REMOTE_WHISPER_BASE_URL",
+        "value": "http://localhost:8080"
+      },
+      "endpoint": "/v1/audio/transcriptions",
+      "model": "whisper-large-v3",
+      "api_key": {
+        "env": "HYPRWHSPR_REMOTE_WHISPER_API_KEY",
+        "file": "/run/secrets/hyprwhspr-remote-key",
+        "file_env": "HYPRWHSPR_REMOTE_WHISPER_API_KEY_FILE"
+      },
+      "headers": {},
+      "body": {},
+      "prompt": "Transcribe technical notes."
+    }
+  }
+}
+```
+
+For <code>whisper.cpp/examples/server</code>, start the server with <code>--inference-path /v1/audio/transcriptions</code> or set <code>endpoint</code> to <code>/inference</code>. Custom providers default to WAV uploads so the server does not need <code>--convert</code>.
 
 #### Recommended setup (systemd user service)
 

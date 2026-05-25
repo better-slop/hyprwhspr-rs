@@ -1,4 +1,5 @@
 mod audio;
+mod custom_openai;
 mod gemini;
 mod groq;
 #[cfg(feature = "parakeet")]
@@ -6,7 +7,7 @@ mod parakeet;
 mod postprocess;
 mod prompt;
 
-use crate::config::{Config, ConfigManager, TranscriptionProvider};
+use crate::config::{Config, ConfigManager, CustomProviderKind, TranscriptionProvider};
 #[cfg(feature = "parakeet")]
 use crate::paths::expand_tilde;
 use crate::whisper::{WhisperManager, WhisperVadOptions};
@@ -16,7 +17,8 @@ use anyhow::{Context, Result};
 use std::env;
 use std::time::Duration;
 
-pub use audio::{encode_to_flac, EncodedAudio};
+pub use audio::{encode_to_flac, encode_to_wav, EncodedAudio};
+pub use custom_openai::CustomOpenAiTranscriber;
 pub use gemini::GeminiTranscriber;
 pub use groq::GroqTranscriber;
 #[cfg(feature = "parakeet")]
@@ -28,6 +30,7 @@ pub enum TranscriptionBackend {
     Whisper(WhisperManager),
     Groq(GroqTranscriber),
     Gemini(GeminiTranscriber),
+    CustomOpenAi(CustomOpenAiTranscriber, String),
     #[cfg(feature = "parakeet")]
     Parakeet(ParakeetTranscriber),
 }
@@ -56,9 +59,9 @@ impl TranscriptionBackend {
         let timeout = Duration::from_secs(config.transcription.request_timeout_secs.max(5));
         let retries = config.transcription.max_retries;
 
-        match config.transcription.provider {
+        match &config.transcription.provider {
             TranscriptionProvider::WhisperCpp => {
-                let prompt = Self::prompt_for(config, TranscriptionProvider::WhisperCpp);
+                let prompt = Self::prompt_for(config, &TranscriptionProvider::WhisperCpp);
                 let whisper_cfg = &config.transcription.whisper_cpp;
                 let whisper_binaries =
                     config_manager.get_whisper_binary_candidates(whisper_cfg.fallback_cli);
@@ -75,7 +78,7 @@ impl TranscriptionBackend {
                 Ok(Self::Whisper(manager))
             }
             TranscriptionProvider::Groq => {
-                let prompt = Self::prompt_for(config, TranscriptionProvider::Groq);
+                let prompt = Self::prompt_for(config, &TranscriptionProvider::Groq);
                 let api_key = env::var("GROQ_API_KEY")
                     .context("GROQ_API_KEY environment variable is not set")?;
                 let provider = GroqTranscriber::new(
@@ -88,7 +91,7 @@ impl TranscriptionBackend {
                 Ok(Self::Groq(provider))
             }
             TranscriptionProvider::Gemini => {
-                let prompt = Self::prompt_for(config, TranscriptionProvider::Gemini);
+                let prompt = Self::prompt_for(config, &TranscriptionProvider::Gemini);
                 let api_key = env::var("GEMINI_API_KEY")
                     .context("GEMINI_API_KEY environment variable is not set")?;
                 let provider = GeminiTranscriber::new(
@@ -103,7 +106,7 @@ impl TranscriptionBackend {
             TranscriptionProvider::Parakeet => {
                 #[cfg(feature = "parakeet")]
                 {
-                    let prompt = Self::prompt_for(config, TranscriptionProvider::Parakeet);
+                    let prompt = Self::prompt_for(config, &TranscriptionProvider::Parakeet);
                     let par_cfg = &config.transcription.parakeet;
 
                     let expanded = expand_tilde(&par_cfg.model_dir);
@@ -123,6 +126,21 @@ impl TranscriptionBackend {
                     bail!("Parakeet backend is disabled in this build. Rebuild with --features parakeet.")
                 }
             }
+            TranscriptionProvider::Custom(name) => {
+                let custom_cfg = config.transcription.custom.get(name).ok_or_else(|| {
+                    anyhow::anyhow!("custom transcription provider '{name}' is not configured")
+                })?;
+                let prompt = Self::prompt_for(config, &TranscriptionProvider::Custom(name.clone()));
+
+                match custom_cfg.kind {
+                    CustomProviderKind::OpenAiAudioTranscriptions => {
+                        let provider = CustomOpenAiTranscriber::new(
+                            name, custom_cfg, timeout, retries, prompt,
+                        )?;
+                        Ok(Self::CustomOpenAi(provider, name.clone()))
+                    }
+                }
+            }
         }
     }
 
@@ -131,6 +149,7 @@ impl TranscriptionBackend {
             TranscriptionBackend::Whisper(manager) => manager.initialize(),
             TranscriptionBackend::Groq(provider) => provider.initialize(),
             TranscriptionBackend::Gemini(provider) => provider.initialize(),
+            TranscriptionBackend::CustomOpenAi(provider, _) => provider.initialize(),
             #[cfg(feature = "parakeet")]
             TranscriptionBackend::Parakeet(provider) => provider.initialize(),
         }
@@ -141,6 +160,9 @@ impl TranscriptionBackend {
             TranscriptionBackend::Whisper(_) => TranscriptionProvider::WhisperCpp,
             TranscriptionBackend::Groq(_) => TranscriptionProvider::Groq,
             TranscriptionBackend::Gemini(_) => TranscriptionProvider::Gemini,
+            TranscriptionBackend::CustomOpenAi(_, name) => {
+                TranscriptionProvider::Custom(name.clone())
+            }
             #[cfg(feature = "parakeet")]
             TranscriptionBackend::Parakeet(_) => TranscriptionProvider::Parakeet,
         }
@@ -151,7 +173,7 @@ impl TranscriptionBackend {
             return true;
         }
 
-        match new.transcription.provider {
+        match &new.transcription.provider {
             TranscriptionProvider::WhisperCpp => {
                 current.transcription.whisper_cpp != new.transcription.whisper_cpp
             }
@@ -159,20 +181,27 @@ impl TranscriptionBackend {
                 current.transcription.request_timeout_secs != new.transcription.request_timeout_secs
                     || current.transcription.max_retries != new.transcription.max_retries
                     || current.transcription.groq != new.transcription.groq
-                    || Self::prompt_for(current, TranscriptionProvider::Groq)
-                        != Self::prompt_for(new, TranscriptionProvider::Groq)
+                    || Self::prompt_for(current, &TranscriptionProvider::Groq)
+                        != Self::prompt_for(new, &TranscriptionProvider::Groq)
             }
             TranscriptionProvider::Gemini => {
                 current.transcription.request_timeout_secs != new.transcription.request_timeout_secs
                     || current.transcription.max_retries != new.transcription.max_retries
                     || current.transcription.gemini != new.transcription.gemini
-                    || Self::prompt_for(current, TranscriptionProvider::Gemini)
-                        != Self::prompt_for(new, TranscriptionProvider::Gemini)
+                    || Self::prompt_for(current, &TranscriptionProvider::Gemini)
+                        != Self::prompt_for(new, &TranscriptionProvider::Gemini)
             }
             TranscriptionProvider::Parakeet => {
                 current.transcription.parakeet != new.transcription.parakeet
-                    || Self::prompt_for(current, TranscriptionProvider::Parakeet)
-                        != Self::prompt_for(new, TranscriptionProvider::Parakeet)
+                    || Self::prompt_for(current, &TranscriptionProvider::Parakeet)
+                        != Self::prompt_for(new, &TranscriptionProvider::Parakeet)
+            }
+            TranscriptionProvider::Custom(name) => {
+                current.transcription.request_timeout_secs != new.transcription.request_timeout_secs
+                    || current.transcription.max_retries != new.transcription.max_retries
+                    || current.transcription.custom.get(name) != new.transcription.custom.get(name)
+                    || Self::prompt_for(current, &TranscriptionProvider::Custom(name.clone()))
+                        != Self::prompt_for(new, &TranscriptionProvider::Custom(name.clone()))
             }
         }
     }
@@ -182,6 +211,9 @@ impl TranscriptionBackend {
             TranscriptionBackend::Whisper(manager) => manager.transcribe(audio_data).await,
             TranscriptionBackend::Groq(provider) => provider.transcribe(audio_data).await,
             TranscriptionBackend::Gemini(provider) => provider.transcribe(audio_data).await,
+            TranscriptionBackend::CustomOpenAi(provider, _) => {
+                provider.transcribe(audio_data).await
+            }
             #[cfg(feature = "parakeet")]
             TranscriptionBackend::Parakeet(provider) => provider.transcribe(audio_data).await,
         }
@@ -189,7 +221,7 @@ impl TranscriptionBackend {
 }
 
 impl TranscriptionBackend {
-    fn prompt_for(config: &Config, provider: TranscriptionProvider) -> String {
+    fn prompt_for(config: &Config, provider: &TranscriptionProvider) -> String {
         match provider {
             TranscriptionProvider::WhisperCpp => {
                 PromptBlueprint::from(config.transcription.whisper_cpp.prompt.as_str()).resolve()
@@ -203,6 +235,12 @@ impl TranscriptionBackend {
             TranscriptionProvider::Parakeet => {
                 PromptBlueprint::from(config.transcription.parakeet.prompt.as_str()).resolve()
             }
+            TranscriptionProvider::Custom(name) => config
+                .transcription
+                .custom
+                .get(name)
+                .map(|custom| PromptBlueprint::from(custom.prompt.as_str()).resolve())
+                .unwrap_or_else(String::new),
         }
     }
 }

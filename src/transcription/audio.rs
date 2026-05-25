@@ -17,10 +17,28 @@ pub struct EncodedAudio {
 /// codecs (e.g. Opus) offer smaller payloads but cause hallucinations in tests with
 /// both Groq Whisper and Gemini 2.5 Pro Flash, so we stick with FLAC here.
 pub async fn encode_to_flac(audio: &[f32]) -> Result<EncodedAudio> {
+    encode_with_ffmpeg(audio, "flac", "audio/flac", &["-compression_level", "12"]).await
+}
+
+/// Encodes raw PCM audio (mono, 16 kHz, f32 samples) into WAV.
+///
+/// whisper.cpp's server accepts WAV uploads by default. Custom OpenAI-compatible
+/// endpoints use this unless configured otherwise so local server setups do not
+/// require ffmpeg-side conversion on the server.
+pub async fn encode_to_wav(audio: &[f32]) -> Result<EncodedAudio> {
+    encode_with_ffmpeg(audio, "wav", "audio/wav", &[]).await
+}
+
+async fn encode_with_ffmpeg(
+    audio: &[f32],
+    format: &'static str,
+    content_type: &'static str,
+    extra_args: &[&str],
+) -> Result<EncodedAudio> {
     if audio.is_empty() {
         return Ok(EncodedAudio {
             data: Bytes::new(),
-            content_type: "audio/flac",
+            content_type,
         });
     }
 
@@ -36,10 +54,9 @@ pub async fn encode_to_flac(audio: &[f32]) -> Result<EncodedAudio> {
         .arg("1")
         .arg("-i")
         .arg("pipe:0")
-        .arg("-compression_level")
-        .arg("12")
+        .args(extra_args)
         .arg("-f")
-        .arg("flac")
+        .arg(format)
         .arg("pipe:1")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -125,13 +142,14 @@ pub async fn encode_to_flac(audio: &[f32]) -> Result<EncodedAudio> {
     }
 
     debug!(
-        "Encoded PCM into FLAC ({} bytes -> {} bytes)",
+        "Encoded PCM into {} ({} bytes -> {} bytes)",
+        format,
         audio.len() * std::mem::size_of::<f32>(),
         encoded.len()
     );
 
     Ok(EncodedAudio {
         data: encoded,
-        content_type: "audio/flac",
+        content_type,
     })
 }
