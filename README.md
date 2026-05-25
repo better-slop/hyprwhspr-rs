@@ -409,6 +409,7 @@ recompiling.
 4. Run using:
    - pretty logs: `RUST_LOG=debug ./target/release/hyprwhspr-rs`
    - production release: `./target/release/hyprwhspr-rs`
+5. On schema changes, run `cargo run --bin generate-schema -- config/schema.json` and commit.
 
 <details>
   <summary>
