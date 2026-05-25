@@ -175,6 +175,7 @@ bind = ALT, SPACE, exec, hyprwhspr-rs record toggle
 
 ```jsonc
 {
+  "$schema": "https://raw.githubusercontent.com/better-slop/hyprwhspr-rs/main/config/schema.json",
   "shortcuts": {
     "press": "SUPER+ALT+D",
     "hold": "SUPER+ALT+CTRL",

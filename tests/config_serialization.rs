@@ -1,6 +1,17 @@
 use hyprwhspr_rs::Config;
 
 #[test]
+fn checked_in_schema_is_current() {
+    let generated = format!(
+        "{}\n",
+        hyprwhspr_rs::config::generated_schema_json().expect("generate schema")
+    );
+    let checked_in = include_str!("../config/schema.json");
+
+    assert_eq!(checked_in, generated);
+}
+
+#[test]
 fn default_config_omits_infinite_max_speech_s() {
     let config = Config::default();
     let json = serde_json::to_string_pretty(&config).expect("serialize config");

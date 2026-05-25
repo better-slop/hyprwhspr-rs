@@ -1,0 +1,662 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Config",
+  "type": "object",
+  "properties": {
+    "audio_device": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint",
+      "default": null,
+      "minimum": 0
+    },
+    "audio_feedback": {
+      "type": "boolean",
+      "default": false
+    },
+    "auto_copy_clipboard": {
+      "type": "boolean",
+      "default": true
+    },
+    "fallback_cli": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "writeOnly": true
+    },
+    "fast_vad": {
+      "$ref": "#/$defs/FastVadConfig",
+      "default": {
+        "enabled": false,
+        "min_speech_ms": 120,
+        "post_roll_ms": 150,
+        "pre_roll_ms": 120,
+        "profile": "aggressive",
+        "silence_timeout_ms": 500,
+        "volatility_decrease_threshold": 0.11999999731779099,
+        "volatility_increase_threshold": 0.3499999940395355,
+        "volatility_window": 24
+      }
+    },
+    "global_paste_shortcut": {
+      "type": "boolean",
+      "default": false
+    },
+    "gpu_layers": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "int32",
+      "writeOnly": true
+    },
+    "model": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "writeOnly": true
+    },
+    "models_dirs": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "writeOnly": true
+    },
+    "no_speech_threshold": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "format": "float",
+      "writeOnly": true
+    },
+    "paste_hints": {
+      "$ref": "#/$defs/PasteHintsConfig",
+      "default": {}
+    },
+    "primary_shortcut": {
+      "type": "string",
+      "writeOnly": true
+    },
+    "shift_paste": {
+      "type": "boolean",
+      "default": true
+    },
+    "shortcuts": {
+      "$ref": "#/$defs/ShortcutsConfig",
+      "default": {
+        "press": "SUPER+ALT+R"
+      }
+    },
+    "start_sound_path": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "start_sound_volume": {
+      "type": "number",
+      "format": "float",
+      "default": 0.30000001192092896
+    },
+    "stop_sound_path": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "stop_sound_volume": {
+      "type": "number",
+      "format": "float",
+      "default": 0.30000001192092896
+    },
+    "threads": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint",
+      "minimum": 0,
+      "writeOnly": true
+    },
+    "transcription": {
+      "$ref": "#/$defs/TranscriptionConfig",
+      "default": {
+        "custom": {},
+        "gemini": {
+          "endpoint": "https://generativelanguage.googleapis.com/v1beta/models",
+          "max_output_tokens": 1024,
+          "model": "gemini-2.5-pro-exp-0827",
+          "prompt": "Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules.",
+          "temperature": 0.0
+        },
+        "groq": {
+          "endpoint": "https://api.groq.com/openai/v1/audio/transcriptions",
+          "model": "whisper-large-v3-turbo",
+          "prompt": "Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules."
+        },
+        "max_retries": 2,
+        "parakeet": {
+          "model_dir": "models/parakeet/parakeet-tdt-0.6b-v3-onnx",
+          "prompt": "Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules."
+        },
+        "provider": "whisper_cpp",
+        "request_timeout_secs": 45,
+        "whisper_cpp": {
+          "fallback_cli": false,
+          "gpu_layers": 999,
+          "model": "base",
+          "models_dirs": [
+            "~/.local/share/hyprwhspr-rs/models"
+          ],
+          "no_speech_threshold": 0.6000000238418579,
+          "prompt": "Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules.",
+          "threads": 4,
+          "vad": {
+            "enabled": false,
+            "min_silence_ms": 100,
+            "min_speech_ms": 250,
+            "model": "ggml-silero-v5.1.2.bin",
+            "samples_overlap": 0.10000000149011612,
+            "speech_pad_ms": 30,
+            "threshold": 0.5
+          }
+        }
+      }
+    },
+    "vad": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/VadConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "writeOnly": true
+    },
+    "whisper_prompt": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "writeOnly": true
+    },
+    "word_overrides": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {}
+    }
+  },
+  "$defs": {
+    "CustomProviderConfig": {
+      "type": "object",
+      "properties": {
+        "api_key": {
+          "$ref": "#/$defs/SecretSource",
+          "default": {
+            "env": null,
+            "file": null,
+            "file_env": null
+          }
+        },
+        "audio_format": {
+          "type": "string",
+          "default": "wav"
+        },
+        "base_url": {
+          "$ref": "#/$defs/ValueSource",
+          "default": {
+            "env": null,
+            "value": null
+          }
+        },
+        "body": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "endpoint": {
+          "type": "string",
+          "default": "/v1/audio/transcriptions"
+        },
+        "headers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "kind": {
+          "$ref": "#/$defs/CustomProviderKind",
+          "default": "openai_audio_transcriptions"
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "model": {
+          "type": "string",
+          "default": ""
+        },
+        "prompt": {
+          "type": "string",
+          "default": "Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules."
+        }
+      }
+    },
+    "CustomProviderKind": {
+      "type": "string",
+      "enum": [
+        "openai_audio_transcriptions"
+      ]
+    },
+    "FastVadConfig": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "min_speech_ms": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 120,
+          "minimum": 0
+        },
+        "post_roll_ms": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 150,
+          "minimum": 0
+        },
+        "pre_roll_ms": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 120,
+          "minimum": 0
+        },
+        "profile": {
+          "$ref": "#/$defs/FastVadProfileConfig",
+          "default": "aggressive"
+        },
+        "silence_timeout_ms": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 500,
+          "minimum": 0
+        },
+        "volatility_decrease_threshold": {
+          "type": "number",
+          "format": "float",
+          "default": 0.11999999731779099
+        },
+        "volatility_increase_threshold": {
+          "type": "number",
+          "format": "float",
+          "default": 0.3499999940395355
+        },
+        "volatility_window": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 24,
+          "minimum": 0
+        }
+      }
+    },
+    "FastVadProfileConfig": {
+      "type": "string",
+      "enum": [
+        "quality",
+        "low_bitrate",
+        "aggressive",
+        "very_aggressive"
+      ]
+    },
+    "GeminiConfig": {
+      "type": "object",
+      "properties": {
+        "endpoint": {
+          "type": "string",
+          "default": "https://generativelanguage.googleapis.com/v1beta/models"
+        },
+        "max_output_tokens": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 1024,
+          "minimum": 0
+        },
+        "model": {
+          "type": "string",
+          "default": "gemini-2.5-pro-exp-0827"
+        },
+        "prompt": {
+          "type": "string",
+          "default": "Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules."
+        },
+        "temperature": {
+          "type": "number",
+          "format": "float",
+          "default": 0.0
+        }
+      }
+    },
+    "GroqConfig": {
+      "type": "object",
+      "properties": {
+        "endpoint": {
+          "type": "string",
+          "default": "https://api.groq.com/openai/v1/audio/transcriptions"
+        },
+        "model": {
+          "type": "string",
+          "default": "whisper-large-v3-turbo"
+        },
+        "prompt": {
+          "type": "string",
+          "default": "Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules."
+        }
+      }
+    },
+    "ParakeetConfig": {
+      "type": "object",
+      "properties": {
+        "model_dir": {
+          "type": "string",
+          "default": "models/parakeet/parakeet-tdt-0.6b-v3-onnx"
+        },
+        "prompt": {
+          "type": "string",
+          "default": "Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules."
+        }
+      }
+    },
+    "PasteHintsConfig": {
+      "type": "object",
+      "properties": {
+        "shift": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "shift_insert": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "SecretSource": {
+      "type": "object",
+      "properties": {
+        "env": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "file": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "file_env": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      }
+    },
+    "ShortcutsConfig": {
+      "type": "object",
+      "properties": {
+        "hold": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "press": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "TranscriptionConfig": {
+      "type": "object",
+      "properties": {
+        "custom": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/CustomProviderConfig"
+          },
+          "default": {}
+        },
+        "gemini": {
+          "$ref": "#/$defs/GeminiConfig",
+          "default": {
+            "endpoint": "https://generativelanguage.googleapis.com/v1beta/models",
+            "max_output_tokens": 1024,
+            "model": "gemini-2.5-pro-exp-0827",
+            "prompt": "Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules.",
+            "temperature": 0.0
+          }
+        },
+        "groq": {
+          "$ref": "#/$defs/GroqConfig",
+          "default": {
+            "endpoint": "https://api.groq.com/openai/v1/audio/transcriptions",
+            "model": "whisper-large-v3-turbo",
+            "prompt": "Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules."
+          }
+        },
+        "max_retries": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 2,
+          "minimum": 0
+        },
+        "parakeet": {
+          "$ref": "#/$defs/ParakeetConfig",
+          "default": {
+            "model_dir": "models/parakeet/parakeet-tdt-0.6b-v3-onnx",
+            "prompt": "Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules."
+          }
+        },
+        "provider": {
+          "$ref": "#/$defs/TranscriptionProvider",
+          "default": "whisper_cpp"
+        },
+        "request_timeout_secs": {
+          "type": "integer",
+          "format": "uint64",
+          "default": 45,
+          "minimum": 0
+        },
+        "whisper_cpp": {
+          "$ref": "#/$defs/WhisperCppConfig",
+          "default": {
+            "fallback_cli": false,
+            "gpu_layers": 999,
+            "model": "base",
+            "models_dirs": [
+              "~/.local/share/hyprwhspr-rs/models"
+            ],
+            "no_speech_threshold": 0.6000000238418579,
+            "prompt": "Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules.",
+            "threads": 4,
+            "vad": {
+              "enabled": false,
+              "min_silence_ms": 100,
+              "min_speech_ms": 250,
+              "model": "ggml-silero-v5.1.2.bin",
+              "samples_overlap": 0.10000000149011612,
+              "speech_pad_ms": 30,
+              "threshold": 0.5
+            }
+          }
+        }
+      }
+    },
+    "TranscriptionProvider": {
+      "type": "string",
+      "anyOf": [
+        {
+          "enum": [
+            "whisper_cpp",
+            "groq",
+            "gemini",
+            "parakeet"
+          ]
+        },
+        {
+          "pattern": "^custom\\.[A-Za-z0-9_-]+$"
+        }
+      ]
+    },
+    "VadConfig": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "max_speech_s": {
+          "type": "number",
+          "format": "float"
+        },
+        "min_silence_ms": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 100,
+          "minimum": 0
+        },
+        "min_speech_ms": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 250,
+          "minimum": 0
+        },
+        "model": {
+          "type": "string",
+          "default": "ggml-silero-v5.1.2.bin"
+        },
+        "samples_overlap": {
+          "type": "number",
+          "format": "float",
+          "default": 0.10000000149011612
+        },
+        "speech_pad_ms": {
+          "type": "integer",
+          "format": "uint32",
+          "default": 30,
+          "minimum": 0
+        },
+        "threshold": {
+          "type": "number",
+          "format": "float",
+          "default": 0.5
+        }
+      }
+    },
+    "ValueSource": {
+      "type": "object",
+      "properties": {
+        "env": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "value": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      }
+    },
+    "WhisperCppConfig": {
+      "type": "object",
+      "properties": {
+        "fallback_cli": {
+          "type": "boolean",
+          "default": false
+        },
+        "gpu_layers": {
+          "type": "integer",
+          "format": "int32",
+          "default": 999
+        },
+        "model": {
+          "type": "string",
+          "default": "base"
+        },
+        "models_dirs": {
+          "type": "array",
+          "default": [
+            "~/.local/share/hyprwhspr-rs/models"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "no_speech_threshold": {
+          "type": "number",
+          "format": "float",
+          "default": 0.6000000238418579
+        },
+        "prompt": {
+          "type": "string",
+          "default": "Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules."
+        },
+        "threads": {
+          "type": "integer",
+          "format": "uint",
+          "default": 4,
+          "minimum": 0
+        },
+        "vad": {
+          "$ref": "#/$defs/VadConfig",
+          "default": {
+            "enabled": false,
+            "min_silence_ms": 100,
+            "min_speech_ms": 250,
+            "model": "ggml-silero-v5.1.2.bin",
+            "samples_overlap": 0.10000000149011612,
+            "speech_pad_ms": 30,
+            "threshold": 0.5
+          }
+        }
+      }
+    }
+  }
+}
