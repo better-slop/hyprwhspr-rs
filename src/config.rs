@@ -282,6 +282,7 @@ pub struct VadConfig {
         deserialize_with = "deserialize_vad_max_speech_s",
         skip_serializing_if = "is_f32_non_finite"
     )]
+    #[schemars(with = "Option<f32>")]
     pub max_speech_s: f32,
     pub speech_pad_ms: u32,
     pub samples_overlap: f32,

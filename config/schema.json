@@ -548,7 +548,10 @@
           "default": false
         },
         "max_speech_s": {
-          "type": "number",
+          "type": [
+            "number",
+            "null"
+          ],
           "format": "float"
         },
         "min_silence_ms": {

@@ -12,6 +12,21 @@ fn checked_in_schema_is_current() {
 }
 
 #[test]
+fn schema_allows_null_vad_max_speech_s() {
+    let schema: serde_json::Value =
+        serde_json::from_str(include_str!("../config/schema.json")).expect("parse schema");
+    let max_speech_s = schema
+        .pointer("/$defs/VadConfig/properties/max_speech_s/type")
+        .expect("max_speech_s type schema");
+
+    assert_eq!(
+        max_speech_s,
+        &serde_json::json!(["number", "null"]),
+        "schema should match runtime deserialization, where max_speech_s: null means unlimited"
+    );
+}
+
+#[test]
 fn default_config_omits_infinite_max_speech_s() {
     let config = Config::default();
     let json = serde_json::to_string_pretty(&config).expect("serialize config");
