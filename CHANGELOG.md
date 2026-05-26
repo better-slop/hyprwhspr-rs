@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.3.29] (https://github.com/better-slop/hyprwhspr-rs/compare/v0.3.28...v0.3.29) - 2026-05-26
+
+### Features
+- *(config)* add versioned schema + bump openssl to 0.10.80 ([#133](https://github.com/better-slop/hyprwhspr-rs/pull/133))
+
+
+### Fixes
+- allow null vad max speech in schema ([#135](https://github.com/better-slop/hyprwhspr-rs/pull/135))
+
 ## [0.3.28] (https://github.com/better-slop/hyprwhspr-rs/compare/v0.3.27...v0.3.28) - 2026-05-25
 
 ### Features
