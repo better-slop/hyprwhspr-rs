@@ -157,8 +157,7 @@ With NixOS:
 <details>
     <summary>
         <strong>Example hyprland bindings config</strong>
-        <p>Configure in, e.g., ~/.config/hypr/hyprland.conf</p>
-        <p>Starting with `v0.28.0`, you may use `"$schema": "https://raw.githubusercontent.com/better-slop/hyprwhspr-rs/<vX.X.X|main>/config/schema.json"` to validate your config.</p>
+        <p>Configure in, e.g., <code>~/.config/hypr/hyprland.conf</code></p>
     </summary>
 
 ```ini
@@ -174,7 +173,8 @@ bind = ALT, SPACE, exec, hyprwhspr-rs record toggle
 <details>
   <summary>
     <strong>Example hyprwhspr-rs config</strong>
-    <p>Configure in ~/.config/hyprwhspr-rs/config.jsonc</p>
+    <p>Configure in <code>~/.config/hyprwhspr-rs/config.jsonc</code></p>
+    <p>Starting with <code>v0.28.0</code>, you may use <code>"$schema": "https://raw.githubusercontent.com/better-slop/hyprwhspr-rs/&lt;vX.X.X|main&gt;/config/schema.json"</code> to validate your config.</p>
   </summary>
 
 ```jsonc
@@ -368,7 +368,7 @@ For <code>whisper.cpp/examples/server</code>, start the server with <code>--infe
 <details>
   <summary>
     <strong>Earshot VAD trimming</strong> (recommended)
-    <p>The default build ships with the impressive and lightweight <a href="https://crates.io/crates/earshot">earshot</a> VoiceActivityDetector baked in. Toggle <code>fast_vad.enabled</code> in your config to trim silence before any provider (whisper.cpp, Groq, Gemini) sees the audio. Extremely useful for lowering costs and increasing speed.</p>
+    <p>The default build ships with the impressive and lightweight <a href="https://crates.io/crates/earshot">earshot</a> VoiceActivityDetector baked in. Toggle <code>fast_vad.enabled</code> in your config to trim silence before any provider sees the audio. Useful for lowering costs and increasing speed.</p>
   </summary>
 
 #### Configuring `fast_vad`
