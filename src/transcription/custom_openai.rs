@@ -40,7 +40,17 @@ impl CustomOpenAiTranscriber {
             let base_url = config.base_url.resolve("base_url")?;
             resolve_endpoint(Some(&base_url), &config.endpoint)?
         };
-        let api_key = config.api_key.resolve("api_key")?;
+        let api_key = if config.subscription.is_configured() {
+            let token = config
+                .subscription
+                .resolve("subscription")?
+                .ok_or_else(|| {
+                    anyhow::anyhow!("subscription auth source did not resolve a token")
+                })?;
+            Some(token)
+        } else {
+            config.api_key.resolve("api_key")?
+        };
 
         let client = Client::builder()
             .user_agent(format!("hyprwhspr-rs (custom:{name})"))
