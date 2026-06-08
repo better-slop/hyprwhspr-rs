@@ -1,9 +1,9 @@
-use crate::config::CustomProviderConfig;
-use crate::transcription::audio::{encode_to_flac, encode_to_wav, EncodedAudio};
+use crate::config::{CustomProviderConfig, SubscriptionAuthSource};
+use crate::transcription::audio::{EncodedAudio, encode_to_flac, encode_to_wav};
 use crate::transcription::postprocess::clean_transcription;
 use crate::transcription::{BackendMetrics, TranscriptionResult};
 use anyhow::{Context, Result};
-use reqwest::{header, multipart, Client, Url};
+use reqwest::{Client, Url, header, multipart};
 use serde::Deserialize;
 use std::cmp;
 use std::time::{Duration, Instant};
@@ -16,7 +16,7 @@ pub struct CustomOpenAiTranscriber {
     label: String,
     client: Client,
     endpoint: Url,
-    api_key: Option<String>,
+    auth: CustomAuth,
     model: String,
     audio_format: AudioFormat,
     headers: Vec<(String, String)>,
@@ -40,16 +40,20 @@ impl CustomOpenAiTranscriber {
             let base_url = config.base_url.resolve("base_url")?;
             resolve_endpoint(Some(&base_url), &config.endpoint)?
         };
-        let api_key = if config.subscription.is_configured() {
-            let token = config
+        let auth = if config.subscription.is_configured() {
+            config
                 .subscription
                 .resolve("subscription")?
                 .ok_or_else(|| {
                     anyhow::anyhow!("subscription auth source did not resolve a token")
                 })?;
-            Some(token)
+            CustomAuth::Subscription(config.subscription.clone())
         } else {
-            config.api_key.resolve("api_key")?
+            config
+                .api_key
+                .resolve("api_key")?
+                .map(CustomAuth::ApiKey)
+                .unwrap_or(CustomAuth::None)
         };
 
         let client = Client::builder()
@@ -68,7 +72,7 @@ impl CustomOpenAiTranscriber {
                 .unwrap_or_else(|| format!("Custom ({name})")),
             client,
             endpoint,
-            api_key,
+            auth,
             model: config.model.clone(),
             audio_format: AudioFormat::from_config(&config.audio_format)?,
             headers: config
@@ -210,9 +214,9 @@ impl CustomOpenAiTranscriber {
             request = request.header(key, value);
         }
 
-        if let Some(api_key) = &self.api_key {
-            if !has_authorization {
-                request = request.bearer_auth(api_key);
+        if !has_authorization {
+            if let Some(auth_token) = self.resolve_auth_token()? {
+                request = request.bearer_auth(auth_token);
             }
         }
 
@@ -253,6 +257,24 @@ impl CustomOpenAiTranscriber {
 
         Err(anyhow::anyhow!(message).context(format!("Custom request failed ({status})")))
     }
+
+    fn resolve_auth_token(&self) -> Result<Option<String>> {
+        match &self.auth {
+            CustomAuth::None => Ok(None),
+            CustomAuth::ApiKey(api_key) => Ok(Some(api_key.clone())),
+            CustomAuth::Subscription(source) => source
+                .resolve("subscription")?
+                .ok_or_else(|| anyhow::anyhow!("subscription auth source did not resolve a token"))
+                .map(Some),
+        }
+    }
+}
+
+#[derive(Clone)]
+enum CustomAuth {
+    None,
+    ApiKey(String),
+    Subscription(SubscriptionAuthSource),
 }
 
 #[derive(Clone, Copy)]
@@ -321,4 +343,160 @@ struct OpenAiErrorResponse {
 #[derive(Debug, Deserialize, Default)]
 struct OpenAiErrorDetail {
     message: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{SecretSource, ValueSource};
+    use bytes::Bytes;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpStream};
+    use tokio::sync::mpsc;
+
+    #[tokio::test]
+    async fn subscription_auth_is_resolved_for_each_request() {
+        let root = std::env::temp_dir().join(format!(
+            "hyprwhspr-rs-custom-openai-auth-refresh-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&root).expect("create temp dir");
+        let auth_path = root.join("auth.json");
+        write_auth_token(&auth_path, "first-token");
+
+        let (endpoint, mut auth_headers) = spawn_auth_capture_server().await;
+        let config = CustomProviderConfig {
+            base_url: ValueSource::default(),
+            endpoint,
+            model: "gpt-4o-mini-transcribe".to_string(),
+            audio_format: "wav".to_string(),
+            api_key: SecretSource::default(),
+            subscription: SubscriptionAuthSource {
+                file: Some(auth_path.to_string_lossy().into_owned()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let transcriber = CustomOpenAiTranscriber::new(
+            "auth_refresh",
+            &config,
+            Duration::from_secs(5),
+            0,
+            String::new(),
+        )
+        .expect("transcriber");
+
+        let audio = EncodedAudio {
+            data: Bytes::from_static(b"not-a-real-wav"),
+            content_type: "audio/wav",
+        };
+
+        transcriber.send_once(&audio).await.expect("first request");
+        assert_eq!(
+            auth_headers.recv().await.as_deref(),
+            Some("Bearer first-token")
+        );
+
+        write_auth_token(&auth_path, "second-token");
+        transcriber.send_once(&audio).await.expect("second request");
+        assert_eq!(
+            auth_headers.recv().await.as_deref(),
+            Some("Bearer second-token")
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    fn write_auth_token(path: &std::path::Path, token: &str) {
+        std::fs::write(
+            path,
+            format!(
+                r#"{{
+                    "tokens": {{
+                        "access_token": "{token}"
+                    }}
+                }}"#
+            ),
+        )
+        .expect("write auth token");
+    }
+
+    async fn spawn_auth_capture_server() -> (String, mpsc::Receiver<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let endpoint = format!(
+            "http://{}/v1/audio/transcriptions",
+            listener.local_addr().expect("local addr")
+        );
+        let (tx, rx) = mpsc::channel(2);
+
+        tokio::spawn(async move {
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().await.expect("accept request");
+                let tx = tx.clone();
+                tokio::spawn(async move {
+                    let auth = read_authorization_header(stream)
+                        .await
+                        .expect("read request");
+                    tx.send(auth).await.expect("send auth header");
+                });
+            }
+        });
+
+        (endpoint, rx)
+    }
+
+    async fn read_authorization_header(mut stream: TcpStream) -> Result<String> {
+        let mut buffer = Vec::new();
+        let mut chunk = [0; 1024];
+        let header_end = loop {
+            let read = stream.read(&mut chunk).await?;
+            if read == 0 {
+                anyhow::bail!("request closed before headers");
+            }
+            buffer.extend_from_slice(&chunk[..read]);
+            if let Some(position) = find_header_end(&buffer) {
+                break position;
+            }
+        };
+
+        let headers = String::from_utf8_lossy(&buffer[..header_end]).into_owned();
+        let content_length = headers
+            .lines()
+            .filter_map(|line| line.split_once(':'))
+            .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+            .and_then(|(_, value)| value.trim().parse::<usize>().ok())
+            .unwrap_or(0);
+        let body_start = header_end + 4;
+        while buffer.len().saturating_sub(body_start) < content_length {
+            let read = stream.read(&mut chunk).await?;
+            if read == 0 {
+                break;
+            }
+            buffer.extend_from_slice(&chunk[..read]);
+        }
+
+        let auth = headers
+            .lines()
+            .filter_map(|line| line.split_once(':'))
+            .find(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+            .map(|(_, value)| value.trim().to_string())
+            .context("missing authorization header")?;
+
+        let body = br#"{"text":""}"#;
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+            body.len()
+        );
+        stream.write_all(response.as_bytes()).await?;
+        stream.write_all(body).await?;
+        stream.shutdown().await?;
+
+        Ok(auth)
+    }
+
+    fn find_header_end(buffer: &[u8]) -> Option<usize> {
+        buffer.windows(4).position(|window| window == b"\r\n\r\n")
+    }
 }
