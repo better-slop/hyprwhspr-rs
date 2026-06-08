@@ -10,7 +10,8 @@
 //! ```
 
 use hyprwhspr_rs::config::{
-    Config, CustomProviderConfig, CustomProviderKind, TranscriptionProvider, ValueSource,
+    Config, CustomProviderConfig, CustomProviderKind, SubscriptionAuthSource,
+    TranscriptionProvider, ValueSource,
 };
 use hyprwhspr_rs::transcription::CustomOpenAiTranscriber;
 use std::process::{Child, Command, Stdio};
@@ -44,6 +45,7 @@ async fn custom_provider_transcribes_against_whisper_cpp_server() {
             model: "whisper-large-v3".to_string(),
             audio_format: "wav".to_string(),
             api_key: Default::default(),
+            subscription: SubscriptionAuthSource::default(),
             headers: Default::default(),
             body: Default::default(),
             prompt: String::new(),

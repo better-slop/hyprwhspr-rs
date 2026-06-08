@@ -259,6 +259,15 @@
         "prompt": {
           "type": "string",
           "default": "Transcribe with proper capitalization, including sentence beginnings, proper nouns, titles, and standard English capitalization rules."
+        },
+        "subscription": {
+          "$ref": "#/$defs/SubscriptionAuthSource",
+          "default": {
+            "env": null,
+            "file": null,
+            "file_env": null,
+            "json_pointer": "/tokens/access_token"
+          }
         }
       }
     },
@@ -445,6 +454,43 @@
             "string",
             "null"
           ]
+        }
+      }
+    },
+    "SubscriptionAuthSource": {
+      "type": "object",
+      "properties": {
+        "env": {
+          "description": "Reads a bearer token directly from an environment variable.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "file": {
+          "description": "Reads a JSON auth file, such as ~/.codex/auth.json.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "file_env": {
+          "description": "Reads the JSON auth file path from an environment variable.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "json_pointer": {
+          "description": "JSON Pointer for the bearer token inside the auth file.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": "/tokens/access_token"
         }
       }
     },

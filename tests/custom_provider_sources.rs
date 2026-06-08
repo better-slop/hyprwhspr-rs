@@ -1,4 +1,4 @@
-use hyprwhspr_rs::config::{SecretSource, ValueSource};
+use hyprwhspr_rs::config::{SecretSource, SubscriptionAuthSource, ValueSource};
 
 #[test]
 fn value_source_prefers_non_empty_env_over_config_value() {
@@ -75,5 +75,66 @@ fn secret_source_prefers_file_env_then_file_then_env() {
     );
 
     std::env::remove_var("HYPRWHSPR_TEST_API_KEY");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn subscription_auth_source_reads_codex_auth_json_access_token() {
+    let root = std::env::temp_dir().join(format!(
+        "hyprwhspr-rs-subscription-source-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).expect("create temp dir");
+    let auth_path = root.join("auth.json");
+    std::fs::write(
+        &auth_path,
+        r#"{
+            "auth_mode": "chatgpt",
+            "tokens": {
+                "access_token": "from-codex-auth",
+                "refresh_token": "refresh-token"
+            }
+        }"#,
+    )
+    .expect("write auth json");
+
+    let source = SubscriptionAuthSource {
+        file: Some(auth_path.to_string_lossy().into_owned()),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        source
+            .resolve("subscription")
+            .expect("resolved subscription token"),
+        Some("from-codex-auth".to_string())
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn subscription_auth_source_uses_custom_json_pointer() {
+    let root = std::env::temp_dir().join(format!(
+        "hyprwhspr-rs-subscription-source-pointer-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).expect("create temp dir");
+    let auth_path = root.join("auth.json");
+    std::fs::write(&auth_path, r#"{"nested":{"token":"from-pointer"}}"#).expect("write auth json");
+
+    let source = SubscriptionAuthSource {
+        file: Some(auth_path.to_string_lossy().into_owned()),
+        json_pointer: Some("/nested/token".to_string()),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        source
+            .resolve("subscription")
+            .expect("resolved subscription token"),
+        Some("from-pointer".to_string())
+    );
+
     let _ = std::fs::remove_dir_all(&root);
 }

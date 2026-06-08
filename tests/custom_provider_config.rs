@@ -1,6 +1,6 @@
 use hyprwhspr_rs::config::{
-    Config, CustomProviderConfig, CustomProviderKind, SecretSource, TranscriptionProvider,
-    ValueSource,
+    Config, CustomProviderConfig, CustomProviderKind, SecretSource, SubscriptionAuthSource,
+    TranscriptionProvider, ValueSource,
 };
 use hyprwhspr_rs::transcription::CustomOpenAiTranscriber;
 use std::time::Duration;
@@ -24,6 +24,9 @@ fn custom_provider_config_deserializes_requested_shape() {
                         "env": "HYPRWHSPR_REMOTE_WHISPER_API_KEY",
                         "file": "/run/secrets/hyprwhspr-remote-key",
                         "file_env": "HYPRWHSPR_REMOTE_WHISPER_API_KEY_FILE"
+                    },
+                    "subscription": {
+                        "file": "~/.codex/auth.json"
                     },
                     "headers": {
                         "x-provider": "whisper.cpp"
@@ -71,6 +74,13 @@ fn custom_provider_config_deserializes_requested_shape() {
         }
     );
     assert_eq!(
+        custom.subscription,
+        SubscriptionAuthSource {
+            file: Some("~/.codex/auth.json".to_string()),
+            ..Default::default()
+        }
+    );
+    assert_eq!(
         custom.headers.get("x-provider").map(String::as_str),
         Some("whisper.cpp")
     );
@@ -102,6 +112,7 @@ fn custom_provider_round_trips() {
                 file: None,
                 file_env: Some("HYPRWHSPR_REMOTE_WHISPER_API_KEY_FILE".to_string()),
             },
+            subscription: SubscriptionAuthSource::default(),
             headers: [("x-provider".to_string(), "whisper.cpp".to_string())].into(),
             body: [("response_format".to_string(), "json".to_string())].into(),
             prompt: "Transcribe technical notes.".to_string(),
@@ -124,11 +135,18 @@ fn custom_provider_allows_absolute_endpoint_without_base_url() {
         model: "whisper-large-v3".to_string(),
         audio_format: "wav".to_string(),
         api_key: SecretSource::default(),
+        subscription: SubscriptionAuthSource::default(),
         headers: Default::default(),
         body: Default::default(),
         prompt: String::new(),
     };
 
-    CustomOpenAiTranscriber::new("fixed_url", &config, Duration::from_secs(5), 0, String::new())
-        .expect("absolute endpoint should not require base_url");
+    CustomOpenAiTranscriber::new(
+        "fixed_url",
+        &config,
+        Duration::from_secs(5),
+        0,
+        String::new(),
+    )
+    .expect("absolute endpoint should not require base_url");
 }

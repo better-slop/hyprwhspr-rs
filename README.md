@@ -34,6 +34,8 @@ https://github.com/user-attachments/assets/bbbaa1c3-1a7e-4165-ad3d-27b7465e201a
   - Use `GEMINI_API_KEY` for provider `gemini`
   - Groq with whisper is cheap (~$0.10 USD/month) and fast as hell. [[Data Controls](https://console.groq.com/settings/data-controls)]
   - Comparatively, Gemini is very slow but offers better output formatting.
+- ChatGPT account via Codex auth (optional)
+  - Use `custom.openai-codex` with `~/.codex/auth.json`
 - Parakeet TDT (optional) - NVIDIA's local ASR model via ONNX
   - Run `./scripts/download-parakeet-tdt.sh` to download model files (~1.2GB)
   - Very fast, but not as accurate as whisper or Gemini
@@ -292,6 +294,28 @@ bind = ALT, SPACE, exec, hyprwhspr-rs record toggle
         "body": {},
         "prompt": "Transcribe as technical documentation with proper capitalization, acronyms, and technical terminology. Do not add punctuation.",
       },
+      "openai-codex": {
+        "kind": "openai_audio_transcriptions",
+        "label": "OpenAI Codex gpt-4o-mini-transcribe",
+        "base_url": {
+          "value": "https://chatgpt.com/backend-api",
+        },
+        "endpoint": "/transcribe",
+        "model": "gpt-4o-mini-transcribe",
+        "audio_format": "wav",
+        "subscription": {
+          "file": "~/.codex/auth.json", // Reads /tokens/access_token by default
+          // "json_pointer": "/tokens/access_token",
+          // "file_env": "HYPRWHSPR_REMOTE_WHISPER_AUTH_FILE",
+          // "env": "HYPRWHSPR_REMOTE_WHISPER_AUTH_TOKEN",
+        },
+        "headers": {
+          "originator": "Codex Desktop",
+          "User-Agent": "Codex Desktop/26.527.60818 (X11; Linux; x64)",
+        },
+        "body": {},
+        "prompt": "Transcribe as technical documentation with proper capitalization, acronyms, and technical terminology. Do not add punctuation.",
+      },
     },
   },
 }
@@ -313,6 +337,7 @@ Use <code>transcription.provider</code> in <code>~/.config/hyprwhspr-rs/config.j
 - gemini provider <strong>requires</strong>: <code>GEMINI_API_KEY</code>
 - whisper_cpp (whisper-cli) <strong>does not require an API key; the binary is discovered via <code>PATH</code> and managed locations under <code> $XDG_DATA_HOME </code> / <code> $HOME </code> </strong>
 - custom providers use <code>transcription.custom.&lt;name&gt;.api_key</code>. Secret resolution prefers <code>file_env</code>, then <code>file</code>, then <code>env</code>. Empty/missing keys are allowed for no-auth local servers.
+- custom providers may use <code>transcription.custom.&lt;name&gt;.subscription</code> for bearer tokens from subscription auth files. If configured, subscription auth is required and <code>api_key</code> is not used.
 
 #### Custom OpenAI-compatible providers
 
@@ -335,6 +360,10 @@ Set <code>transcription.provider</code> to <code>custom.&lt;name&gt;</code>, the
         "env": "HYPRWHSPR_REMOTE_WHISPER_API_KEY",
         "file": "/run/secrets/hyprwhspr-remote-key",
         "file_env": "HYPRWHSPR_REMOTE_WHISPER_API_KEY_FILE"
+      },
+      "subscription": {
+        "file": "~/.codex/auth.json",
+        "json_pointer": "/tokens/access_token"
       },
       "headers": {},
       "body": {},

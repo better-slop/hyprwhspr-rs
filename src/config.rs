@@ -626,6 +626,122 @@ impl SecretSource {
     }
 }
 
+fn default_subscription_json_pointer() -> String {
+    "/tokens/access_token".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(default)]
+pub struct SubscriptionAuthSource {
+    /// Reads a bearer token directly from an environment variable.
+    pub env: Option<String>,
+    /// Reads a JSON auth file, such as ~/.codex/auth.json.
+    pub file: Option<String>,
+    /// Reads the JSON auth file path from an environment variable.
+    pub file_env: Option<String>,
+    /// JSON Pointer for the bearer token inside the auth file.
+    pub json_pointer: Option<String>,
+}
+
+impl Default for SubscriptionAuthSource {
+    fn default() -> Self {
+        Self {
+            env: None,
+            file: None,
+            file_env: None,
+            json_pointer: Some(default_subscription_json_pointer()),
+        }
+    }
+}
+
+impl SubscriptionAuthSource {
+    pub fn is_configured(&self) -> bool {
+        self.env
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty())
+            || self
+                .file
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty())
+            || self
+                .file_env
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty())
+    }
+
+    pub fn resolve(&self, field_name: &str) -> Result<Option<String>> {
+        if let Some(env_name) = self
+            .env
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        {
+            if let Ok(value) = env::var(env_name) {
+                let trimmed = value.trim();
+                if !trimmed.is_empty() {
+                    return Ok(Some(trimmed.to_string()));
+                }
+            }
+        }
+
+        if let Some(env_name) = self
+            .file_env
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        {
+            if let Ok(path) = env::var(env_name) {
+                let trimmed = path.trim();
+                if !trimmed.is_empty() {
+                    return Self::read_json_token(
+                        trimmed,
+                        self.json_pointer.as_deref(),
+                        field_name,
+                    )
+                    .map(Some);
+                }
+            }
+        }
+
+        if let Some(path) = self
+            .file
+            .as_deref()
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+        {
+            return Self::read_json_token(path, self.json_pointer.as_deref(), field_name).map(Some);
+        }
+
+        Ok(None)
+    }
+
+    fn read_json_token(path: &str, json_pointer: Option<&str>, field_name: &str) -> Result<String> {
+        let expanded = expand_tilde(path);
+        let value = fs::read_to_string(&expanded)
+            .with_context(|| format!("Failed to read {field_name} auth file: {path}"))?;
+        let json: serde_json::Value = serde_json::from_str(&value)
+            .with_context(|| format!("Failed to parse {field_name} auth JSON: {path}"))?;
+
+        let pointer = json_pointer
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("/tokens/access_token");
+        let token = json
+            .pointer(pointer)
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                anyhow!("{field_name} token missing at JSON pointer {pointer}: {path}")
+            })?;
+
+        Ok(token.to_string())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(default)]
 pub struct CustomProviderConfig {
@@ -636,6 +752,7 @@ pub struct CustomProviderConfig {
     pub model: String,
     pub audio_format: String,
     pub api_key: SecretSource,
+    pub subscription: SubscriptionAuthSource,
     pub headers: HashMap<String, String>,
     pub body: HashMap<String, String>,
     pub prompt: String,
@@ -651,6 +768,7 @@ impl Default for CustomProviderConfig {
             model: String::new(),
             audio_format: "wav".to_string(),
             api_key: SecretSource::default(),
+            subscription: SubscriptionAuthSource::default(),
             headers: HashMap::new(),
             body: HashMap::new(),
             prompt: default_whisper_prompt(),
