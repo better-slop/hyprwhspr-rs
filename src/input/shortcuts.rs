@@ -129,7 +129,11 @@ impl GlobalShortcuts {
                     _ => {
                         self.handle_input_device_event(event);
                         pressed_keys.clear();
-                        release_active_hold_shortcut(&tx, self.kind, &mut combination_active);
+                        release_hold_shortcut_on_input_change(
+                            &tx,
+                            self.kind,
+                            &mut combination_active,
+                        );
                     }
                 }
             }
@@ -260,14 +264,14 @@ impl GlobalShortcuts {
                     info!("Removed {} keyboard device(s)", removed);
                 }
                 pressed_keys.clear();
-                release_active_hold_shortcut(&tx, self.kind, &mut combination_active);
+                release_hold_shortcut_on_input_change(&tx, self.kind, &mut combination_active);
             }
 
             if fallback_rescan_enabled && last_fallback_rescan.elapsed() >= fallback_rescan_interval
             {
                 last_fallback_rescan = Instant::now();
                 pressed_keys.clear();
-                release_active_hold_shortcut(&tx, self.kind, &mut combination_active);
+                release_hold_shortcut_on_input_change(&tx, self.kind, &mut combination_active);
                 if let Err(err) = self.refresh_devices() {
                     error!("Failed to refresh keyboard devices: {}", err);
                 }
@@ -556,15 +560,11 @@ impl GlobalShortcuts {
     }
 }
 
-fn release_active_hold_shortcut(
+fn release_hold_shortcut_on_input_change(
     tx: &mpsc::Sender<ShortcutEvent>,
     kind: ShortcutKind,
     combination_active: &mut bool,
 ) {
-    if !*combination_active {
-        return;
-    }
-
     *combination_active = false;
 
     if !matches!(kind, ShortcutKind::Hold) {
@@ -577,7 +577,7 @@ fn release_active_hold_shortcut(
         phase: ShortcutPhase::End,
     }) {
         warn!(
-            "Failed to send shortcut release event after input device change: {}",
+            "Failed to send hold shortcut release event after input device change: {}",
             err
         );
     }
@@ -657,7 +657,20 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(1);
         let mut combination_active = true;
 
-        release_active_hold_shortcut(&tx, ShortcutKind::Hold, &mut combination_active);
+        release_hold_shortcut_on_input_change(&tx, ShortcutKind::Hold, &mut combination_active);
+
+        let event = rx.try_recv().expect("hold release event");
+        assert!(!combination_active);
+        assert_eq!(event.kind, ShortcutKind::Hold);
+        assert_eq!(event.phase, ShortcutPhase::End);
+    }
+
+    #[test]
+    fn inactive_hold_disconnect_still_emits_release() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let mut combination_active = false;
+
+        release_hold_shortcut_on_input_change(&tx, ShortcutKind::Hold, &mut combination_active);
 
         let event = rx.try_recv().expect("hold release event");
         assert!(!combination_active);
@@ -670,7 +683,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(1);
         let mut combination_active = true;
 
-        release_active_hold_shortcut(&tx, ShortcutKind::Press, &mut combination_active);
+        release_hold_shortcut_on_input_change(&tx, ShortcutKind::Press, &mut combination_active);
 
         assert!(!combination_active);
         assert!(rx.try_recv().is_err());
