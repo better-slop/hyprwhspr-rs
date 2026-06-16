@@ -45,10 +45,29 @@ https://github.com/user-attachments/assets/bbbaa1c3-1a7e-4165-ad3d-27b7465e201a
 
 - Fast speech-to-text
 - Intuitive configuration
-  - word overrides ([many are already baked in](https://github.com/better-slop/hyprwhspr-rs/blob/58f192b5a69a3d334b9a3d547b3ef5dd350c8678/src/input/injector.rs#L423-L639))
-  - multi provider support
+  - word overrides use a bit of regex and inverse text normalization (ITN) by [FluidInference](https://github.com/FluidInference/text-processing-rs) (see below)
+  - multi provider support (OpenAI, local whisper, parakeet) - websocket support coming soon!
   - hot reloading during runtime
 - Optional fast VAD trims (`fast_vad.enabled`) audio files, reducing inferences costs while increasing output speed
+
+```txt
+┌─ Text Pipeline (steps: 11, changed: 4)
+│ IN  : Yep. Tab, newline, test, newline, newline, test, open parenthesis, hello world, close parenthesis, period
+│ • inverse_text_normalization (applied ×62)
+│   - Yep. Tab, newline, test, newline, newline, test, open parenthesis, hello world, close parenthesis, period
+│   + Yep. Tab, newline, test, newline, newline, test, (, hello world, ), .
+│ • control_commands (applied ×4)
+│   - Yep. Tab, newline, test, newline, newline, test, (, hello world, ), .
+│   + Yep. ⇥, ⏎, test, ⏎, ⏎, test, (, hello world, ), .
+│ • control_artifact_cleanup (applied)
+│   - Yep. ⇥, ⏎, test, ⏎, ⏎, test, (, hello world, ), .
+│   + Yep.⏎test,⏎⏎test, (hello world).
+│ • capitalize_after_period (applied ×2)
+│   - Yep.⏎test,⏎⏎test, (hello world).
+│   + Yep.⏎Test,⏎⏎Test, (hello world).
+│ OUT : Yep.⏎Test,⏎⏎Test, (hello world).
+└─
+```
 
 ## Built for Hyprland
 
