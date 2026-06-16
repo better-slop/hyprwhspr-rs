@@ -1,6 +1,8 @@
 use owo_colors::OwoColorize;
 use similar::{Algorithm, ChangeTag, DiffableStr, InlineChange, TextDiff};
 
+const REPORT_WIDTH: usize = 118;
+
 pub(crate) fn assert_text_eq(label: &str, expected: &str, actual: &str) {
     if expected == actual {
         return;
@@ -49,7 +51,7 @@ fn render_similar_report(expected: &str, actual: &str) -> String {
             .underline()
     ));
     out.push_str(&render_inline_diff(expected, actual));
-    hard_wrap_ansi_report(&out)
+    out
 }
 
 fn render_inline_diff(expected: &str, actual: &str) -> String {
@@ -89,23 +91,54 @@ fn render_inline_diff(expected: &str, actual: &str) -> String {
 
 fn colorize_unified_diff(diff: &str) -> String {
     diff.lines()
-        .map(|line| {
+        .flat_map(|line| {
+            let wrapped = wrap_chars(line, REPORT_WIDTH);
             if line.starts_with("---") || line.starts_with("+++") {
-                line.bold().to_string()
+                styled_lines(wrapped, UnifiedStyle::Header)
             } else if line.starts_with("@@") {
-                line.cyan().to_string()
+                styled_lines(wrapped, UnifiedStyle::Hunk)
             } else if line.starts_with('+') {
-                line.green().to_string()
+                styled_lines(wrapped, UnifiedStyle::Insert)
             } else if line.starts_with('-') {
-                line.red().to_string()
+                styled_lines(wrapped, UnifiedStyle::Delete)
             } else if line.starts_with("\\ ") {
-                line.dimmed().to_string()
+                styled_lines(wrapped, UnifiedStyle::Context)
             } else {
-                line.dimmed().to_string()
+                styled_lines(wrapped, UnifiedStyle::Context)
             }
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn styled_lines(lines: Vec<String>, style: UnifiedStyle) -> Vec<String> {
+    lines
+        .into_iter()
+        .enumerate()
+        .map(|(idx, line)| {
+            let line = if idx == 0 {
+                line
+            } else {
+                format!("      {line}")
+            };
+            match style {
+                UnifiedStyle::Header => line.bold().to_string(),
+                UnifiedStyle::Hunk => line.cyan().to_string(),
+                UnifiedStyle::Insert => line.green().to_string(),
+                UnifiedStyle::Delete => line.red().to_string(),
+                UnifiedStyle::Context => line.dimmed().to_string(),
+            }
+        })
+        .collect()
+}
+
+#[derive(Debug, Clone, Copy)]
+enum UnifiedStyle {
+    Header,
+    Hunk,
+    Insert,
+    Delete,
+    Context,
 }
 
 fn render_inline_change_line<T>(change: &InlineChange<'_, T>) -> String
@@ -117,24 +150,46 @@ where
         ChangeTag::Insert => "+",
         ChangeTag::Equal => " ",
     };
-    let prefix = format!(
+    let first_prefix = format!(
         "{} {} │{}│",
         line_no(change.old_index()),
         line_no(change.new_index()),
         sign
     );
-    let body = render_inline_change(change);
+    let continuation_prefix = format!("{} {} │ │", line_no(None), line_no(None));
+    let available_width = REPORT_WIDTH.saturating_sub(visible_len(&first_prefix) + 1);
+    let chunks = inline_chunks(change);
+    let wrapped_body = wrap_styled_chunks(&chunks, available_width);
     let newline_marker = if change.missing_newline() {
         format!(" {}", "\\ No newline at end of file".dimmed())
     } else {
         String::new()
     };
+    let line_count = wrapped_body.len();
 
-    match change.tag() {
-        ChangeTag::Delete => format!("{} {}{}", prefix.red(), body, newline_marker),
-        ChangeTag::Insert => format!("{} {}{}", prefix.green(), body, newline_marker),
-        ChangeTag::Equal => format!("{} {}{}", prefix.dimmed(), body.dimmed(), newline_marker),
-    }
+    wrapped_body
+        .into_iter()
+        .enumerate()
+        .map(|(idx, body)| {
+            let prefix = if idx == 0 {
+                &first_prefix
+            } else {
+                &continuation_prefix
+            };
+            let marker = if idx + 1 == line_count {
+                newline_marker.as_str()
+            } else {
+                ""
+            };
+
+            match change.tag() {
+                ChangeTag::Delete => format!("{} {}{}", prefix.red(), body, marker),
+                ChangeTag::Insert => format!("{} {}{}", prefix.green(), body, marker),
+                ChangeTag::Equal => format!("{} {}{}", prefix.dimmed(), body, marker),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn line_no(index: Option<usize>) -> String {
@@ -143,25 +198,140 @@ fn line_no(index: Option<usize>) -> String {
         .unwrap_or_else(|| "    ".to_string())
 }
 
-fn render_inline_change<T>(change: &InlineChange<'_, T>) -> String
+fn inline_chunks<T>(change: &InlineChange<'_, T>) -> Vec<StyledText>
 where
     T: DiffableStr + ?Sized,
 {
-    let mut out = String::new();
+    let mut chunks = Vec::new();
 
     for (emphasized, value) in change.iter_strings_lossy() {
         let escaped = escape_visible(&value);
-        let rendered = match (change.tag(), emphasized) {
-            (ChangeTag::Delete, true) => escaped.red().bold().underline().to_string(),
-            (ChangeTag::Insert, true) => escaped.green().bold().underline().to_string(),
-            (ChangeTag::Delete, false) => escaped.red().to_string(),
-            (ChangeTag::Insert, false) => escaped.green().to_string(),
-            (ChangeTag::Equal, _) => escaped.dimmed().to_string(),
+        let style = match (change.tag(), emphasized) {
+            (ChangeTag::Delete, true) => TextStyle::DeleteEmphasis,
+            (ChangeTag::Insert, true) => TextStyle::InsertEmphasis,
+            (ChangeTag::Delete, false) => TextStyle::Delete,
+            (ChangeTag::Insert, false) => TextStyle::Insert,
+            (ChangeTag::Equal, _) => TextStyle::Equal,
         };
-        out.push_str(&rendered);
+        chunks.extend(tokenize_styled_text(&escaped, style));
     }
 
-    out.trim_end_matches('⏎').to_string()
+    if matches!(chunks.last(), Some(chunk) if chunk.text == "⏎") {
+        chunks.pop();
+    }
+
+    chunks
+}
+
+fn tokenize_styled_text(value: &str, style: TextStyle) -> Vec<StyledText> {
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    let mut current_is_space: Option<bool> = None;
+
+    for ch in value.chars() {
+        let is_space = ch.is_whitespace();
+        if current_is_space.is_some_and(|kind| kind != is_space) {
+            chunks.push(StyledText {
+                text: std::mem::take(&mut current),
+                style,
+            });
+        }
+        current_is_space = Some(is_space);
+        current.push(ch);
+    }
+
+    if !current.is_empty() {
+        chunks.push(StyledText {
+            text: current,
+            style,
+        });
+    }
+
+    chunks
+}
+
+fn wrap_styled_chunks(chunks: &[StyledText], width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    let mut current_width = 0usize;
+
+    for chunk in chunks {
+        let mut text = chunk.text.as_str();
+        while !text.is_empty() {
+            let text_width = visible_len(text);
+            if text_width + current_width <= width || current_width == 0 {
+                if text_width + current_width <= width {
+                    current.push_str(&chunk.render_text(text));
+                    current_width += text_width;
+                    break;
+                }
+
+                let split_at = nth_char_boundary(text, width);
+                let (head, tail) = text.split_at(split_at);
+                current.push_str(&chunk.render_text(head));
+                lines.push(std::mem::take(&mut current));
+                current_width = 0;
+                text = tail.trim_start();
+                continue;
+            }
+
+            if !current.trim().is_empty() {
+                lines.push(current.trim_end().to_string());
+            } else {
+                lines.push(std::mem::take(&mut current));
+            }
+            current.clear();
+            current_width = 0;
+            text = text.trim_start();
+        }
+    }
+
+    if !current.is_empty() {
+        lines.push(current.trim_end().to_string());
+    }
+
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+
+    lines
+}
+
+fn nth_char_boundary(value: &str, char_count: usize) -> usize {
+    value
+        .char_indices()
+        .nth(char_count)
+        .map(|(idx, _)| idx)
+        .unwrap_or(value.len())
+}
+
+fn visible_len(value: &str) -> usize {
+    value.chars().count()
+}
+
+#[derive(Debug, Clone)]
+struct StyledText {
+    text: String,
+    style: TextStyle,
+}
+
+impl StyledText {
+    fn render_text(&self, text: &str) -> String {
+        match self.style {
+            TextStyle::Delete | TextStyle::Insert | TextStyle::Equal => text.to_string(),
+            TextStyle::DeleteEmphasis => text.red().bold().underline().to_string(),
+            TextStyle::InsertEmphasis => text.green().bold().underline().to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum TextStyle {
+    Delete,
+    Insert,
+    Equal,
+    DeleteEmphasis,
+    InsertEmphasis,
 }
 
 fn push_wrapped_body(lines: &mut Vec<String>, label: &str, value: &str) {
@@ -226,89 +396,4 @@ fn escape_visible(value: &str) -> String {
     }
 
     rendered
-}
-
-fn hard_wrap_ansi_report(report: &str) -> String {
-    const WIDTH: usize = 118;
-    const CONTINUATION: &str = "      ";
-
-    report
-        .lines()
-        .flat_map(|line| hard_wrap_ansi_line(line, WIDTH, CONTINUATION))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn hard_wrap_ansi_line(line: &str, width: usize, continuation: &str) -> Vec<String> {
-    if visible_width(line) <= width {
-        return vec![line.to_string()];
-    }
-
-    let mut out = Vec::new();
-    let mut current = String::new();
-    let mut visible = 0usize;
-    let mut byte_idx = 0usize;
-
-    while byte_idx < line.len() {
-        let rest = &line[byte_idx..];
-        if rest.starts_with('\x1b') {
-            let sequence_len = ansi_sequence_len(rest);
-            current.push_str(&rest[..sequence_len]);
-            byte_idx += sequence_len;
-            continue;
-        }
-
-        let ch = rest.chars().next().expect("non-empty string has next char");
-        current.push(ch);
-        byte_idx += ch.len_utf8();
-        visible += 1;
-
-        if visible >= width && byte_idx < line.len() {
-            out.push(current);
-            current = continuation.to_string();
-            visible = continuation.chars().count();
-        }
-    }
-
-    if !current.is_empty() {
-        out.push(current);
-    }
-
-    out
-}
-
-fn visible_width(line: &str) -> usize {
-    let mut width = 0usize;
-    let mut byte_idx = 0usize;
-
-    while byte_idx < line.len() {
-        let rest = &line[byte_idx..];
-        if rest.starts_with('\x1b') {
-            byte_idx += ansi_sequence_len(rest);
-            continue;
-        }
-
-        let ch = rest.chars().next().expect("non-empty string has next char");
-        byte_idx += ch.len_utf8();
-        width += 1;
-    }
-
-    width
-}
-
-fn ansi_sequence_len(value: &str) -> usize {
-    let bytes = value.as_bytes();
-    if bytes.first() != Some(&0x1b) {
-        return 0;
-    }
-
-    let start = if bytes.get(1) == Some(&b'[') { 2 } else { 1 };
-
-    for (idx, byte) in bytes.iter().enumerate().skip(start) {
-        if (0x40..=0x7e).contains(byte) {
-            return idx + 1;
-        }
-    }
-
-    value.len()
 }
