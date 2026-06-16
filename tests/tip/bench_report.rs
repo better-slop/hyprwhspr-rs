@@ -1,3 +1,4 @@
+use crate::correctness_score::CorrectnessScore;
 use crate::live_harness::{FastVadMode, SAMPLE_RATE_HZ};
 use crate::resource_timeline::TipPhaseSample;
 use crate::resource_usage::ResourceDelta;
@@ -81,6 +82,10 @@ pub(crate) fn print_case_report(input: TipBenchmarkInput<'_>) {
         kb_text(input.resource_delta.high_water_rss_kb)
     );
     println!("max_rss_kb: {}", kb_text(input.resource_delta.max_rss_kb));
+    println!(
+        "{}",
+        CorrectnessScore::calculate(input.expected, input.normalized).render()
+    );
     println!("--- resource timeline ---");
     for sample in input.timeline_samples {
         println!(

@@ -1,7 +1,7 @@
-use crate::bench_report::{print_case_report, TipBenchmarkInput};
+use crate::bench_report::{TipBenchmarkInput, print_case_report};
 use crate::diff_report::{assert_text_eq, print_text_diff_report};
 use crate::resource_timeline::TipResourceTimeline;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use hyprwhspr_rs::audio::FastVad;
 use hyprwhspr_rs::config::{Config, ConfigManager, TranscriptionProvider};
 use hyprwhspr_rs::text::NormalizeTextService;

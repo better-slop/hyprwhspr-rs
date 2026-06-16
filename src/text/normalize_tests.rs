@@ -1,5 +1,6 @@
 use super::*;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 fn service(overrides: &[(&str, &str)]) -> NormalizeTextService {
     NormalizeTextService::new(
@@ -8,6 +9,21 @@ fn service(overrides: &[(&str, &str)]) -> NormalizeTextService {
             .map(|(from, to)| ((*from).to_string(), (*to).to_string()))
             .collect(),
     )
+}
+
+#[derive(Debug)]
+struct FakeItnEngine {
+    output: &'static str,
+    rule_count: usize,
+}
+
+impl ItnEngine for FakeItnEngine {
+    fn normalize(&self, _text: &str, _overrides: &[NormalizeRule]) -> ItnOutput {
+        ItnOutput {
+            text: self.output.to_string(),
+            rule_count: self.rule_count,
+        }
+    }
 }
 
 #[test]
@@ -84,6 +100,39 @@ fn word_overrides_feed_itn_custom_rules_and_keep_em_dash() {
     assert_eq!(normalizer.normalize("Hyperland"), "hyprland");
     assert_eq!(normalizer.normalize("em dash"), "—");
     assert_eq!(normalizer.normalize("gee pee tee"), "GPT");
+}
+
+#[test]
+fn fake_itn_engine_exercises_cleanup_and_override_order_without_globals() {
+    let normalizer = NormalizeTextService::with_itn_engine(
+        HashMap::from([("Hyperland".to_string(), "hyprland".to_string())]),
+        Arc::new(FakeItnEngine {
+            output: "\" , Hyperland, \".",
+            rule_count: 9,
+        }),
+    );
+
+    assert_eq!(normalizer.normalize("ignored"), "\"hyprland\"");
+}
+
+#[test]
+fn normalization_pipeline_order_is_explicit() {
+    assert_eq!(
+        NormalizeTextService::pipeline_step_names(),
+        vec![
+            "normalize_line_breaks",
+            "inverse_text_normalization",
+            "control_commands",
+            "control_artifact_cleanup",
+            "collapse_spaces",
+            "trim_spaces_around_newlines",
+            "merge_identical_symbols",
+            "collapse_underscore_spacing",
+            "capitalize_after_period",
+            "word_overrides",
+            "trim_whitespace",
+        ]
+    );
 }
 
 #[test]

@@ -3,6 +3,8 @@ use clap::Parser;
 
 #[path = "../../tests/tip/bench_report.rs"]
 mod bench_report;
+#[path = "../../tests/tip/correctness_score.rs"]
+mod correctness_score;
 #[path = "../../tests/tip/diff_report.rs"]
 mod diff_report;
 #[allow(dead_code)]

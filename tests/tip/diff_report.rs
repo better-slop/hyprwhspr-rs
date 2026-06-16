@@ -1,6 +1,8 @@
 use owo_colors::OwoColorize;
 use similar::{Algorithm, ChangeTag, DiffableStr, InlineChange, TextDiff};
 
+use crate::correctness_score::CorrectnessScore;
+
 const REPORT_WIDTH: usize = 118;
 
 pub(crate) fn assert_text_eq(label: &str, expected: &str, actual: &str) {
@@ -21,8 +23,10 @@ pub(crate) fn print_text_diff_report(label: &str, expected: &str, actual: &str) 
 }
 
 fn text_diff_report(label: &str, expected: &str, actual: &str) -> String {
+    let score = CorrectnessScore::calculate(expected, actual);
     format!(
-        "{label} mismatch\n\n{}\n\n{}",
+        "{label} mismatch\n{}\n\n{}\n\n{}",
+        score.render(),
         render_wrapped_text_pipeline_diff(expected, actual),
         render_similar_report(expected, actual)
     )

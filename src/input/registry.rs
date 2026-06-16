@@ -15,6 +15,7 @@ pub(super) struct KeyboardRegistry {
 pub(super) struct PollOutcome {
     pub key_events: usize,
     pub devices_changed: bool,
+    pub backpressure: bool,
 }
 
 struct KeyboardDevice {
@@ -76,6 +77,7 @@ impl KeyboardRegistry {
                         }
 
                         if outcome.key_events >= max_events {
+                            outcome.backpressure = true;
                             return Ok(outcome);
                         }
                     }

@@ -54,6 +54,6 @@ heaptrack --record-only "${test_binary}" --ignored --nocapture --exact "${case_n
 if command -v heaptrack_print >/dev/null 2>&1; then
   latest_profile="$(ls -t heaptrack.*.zst heaptrack.*.gz 2>/dev/null | head -n 1)"
   if [[ -n "${latest_profile}" ]]; then
-    heaptrack_print "${latest_profile}"
+    heaptrack_print --file "${latest_profile}"
   fi
 fi

@@ -1,14 +1,15 @@
 use anyhow::Result;
 
 mod bench_report;
+mod correctness_score;
 mod diff_report;
 mod live_harness;
 mod resource_timeline;
 mod resource_usage;
 
 use live_harness::{
-    run_normalization_golden_assertion, run_provider_case, run_selected_live_cases,
-    CorrectnessMode, FastVadMode,
+    CorrectnessMode, FastVadMode, run_normalization_golden_assertion, run_provider_case,
+    run_selected_live_cases,
 };
 
 #[test]
