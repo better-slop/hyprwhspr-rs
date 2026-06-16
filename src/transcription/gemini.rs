@@ -114,6 +114,7 @@ impl GeminiTranscriber {
             upload_duration: Some(timings.upload),
             response_duration: Some(timings.response),
             transcription_duration,
+            phases: Vec::new(),
         };
 
         Ok(TranscriptionResult {

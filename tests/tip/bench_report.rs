@@ -1,9 +1,10 @@
 use super::{FastVadMode, SAMPLE_RATE_HZ};
+use crate::resource_timeline::TipPhaseSample;
 use crate::resource_usage::ResourceDelta;
 use comfy_table::modifiers::UTF8_ROUND_CORNERS;
 use comfy_table::presets::UTF8_FULL;
 use comfy_table::{Cell, CellAlignment, ContentArrangement, Row, Table};
-use hyprwhspr_rs::transcription::BackendMetrics;
+use hyprwhspr_rs::transcription::{BackendMetrics, BackendPhaseMetric};
 use std::time::Duration;
 
 const DASH: &str = "—";
@@ -25,6 +26,7 @@ pub(crate) struct TipBenchmarkInput<'a> {
     pub(crate) normalize_duration: Duration,
     pub(crate) total_duration: Duration,
     pub(crate) resource_delta: ResourceDelta,
+    pub(crate) timeline_samples: &'a [TipPhaseSample],
     pub(crate) raw_transcript: &'a str,
     pub(crate) normalized: &'a str,
     pub(crate) expected: &'a str,
@@ -44,6 +46,14 @@ pub(crate) fn print_case_report(input: TipBenchmarkInput<'_>) {
     }
     println!("cpu_user_ms: {:.3}", ms(input.resource_delta.user_cpu));
     println!("cpu_system_ms: {:.3}", ms(input.resource_delta.system_cpu));
+    println!(
+        "self_cpu_ms: {:.3}",
+        ms(input.resource_delta.self_user_cpu + input.resource_delta.self_system_cpu)
+    );
+    println!(
+        "child_cpu_ms: {:.3}",
+        ms(input.resource_delta.child_user_cpu + input.resource_delta.child_system_cpu)
+    );
     println!("cpu_total_ms: {:.3}", ms(input.resource_delta.total_cpu));
     println!(
         "cpu_percent: {}",
@@ -71,6 +81,69 @@ pub(crate) fn print_case_report(input: TipBenchmarkInput<'_>) {
         kb_text(input.resource_delta.high_water_rss_kb)
     );
     println!("max_rss_kb: {}", kb_text(input.resource_delta.max_rss_kb));
+    println!("--- resource timeline ---");
+    for sample in input.timeline_samples {
+        println!(
+            "{} wall_ms={:.3} cpu_ms={:.3} self_cpu_ms={:.3} child_cpu_ms={:.3} cpu_percent={} rss_delta_kb={} rss_hwm_kb={} bytes_in={} bytes_out={}",
+            sample.name,
+            ms(sample.wall_duration),
+            ms(sample.resource_delta.total_cpu),
+            ms(sample.resource_delta.self_user_cpu + sample.resource_delta.self_system_cpu),
+            ms(sample.resource_delta.child_user_cpu + sample.resource_delta.child_system_cpu),
+            sample
+                .resource_delta
+                .cpu_percent
+                .map(|value| format!("{value:.1}"))
+                .unwrap_or_else(|| DASH.to_string()),
+            sample
+                .resource_delta
+                .rss_delta_kb
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| DASH.to_string()),
+            kb_text(sample.resource_delta.high_water_rss_kb),
+            sample
+                .bytes_in
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| DASH.to_string()),
+            sample
+                .bytes_out
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| DASH.to_string())
+        );
+    }
+    if !input.backend_metrics.phases.is_empty() {
+        println!("--- backend phase timeline ---");
+        for phase in &input.backend_metrics.phases {
+            println!(
+                "{} wall_ms={:.3} cpu_ms={:.3} self_cpu_ms={:.3} child_cpu_ms={:.3} cpu_percent={} rss_delta_kb={} rss_hwm_kb={} max_rss_kb={} bytes_in={} bytes_out={}",
+                phase.name,
+                ms(phase.wall_duration),
+                ms(phase.resource_delta.total_cpu),
+                ms(phase.resource_delta.self_user_cpu + phase.resource_delta.self_system_cpu),
+                ms(phase.resource_delta.child_user_cpu + phase.resource_delta.child_system_cpu),
+                phase
+                    .resource_delta
+                    .cpu_percent
+                    .map(|value| format!("{value:.1}"))
+                    .unwrap_or_else(|| DASH.to_string()),
+                phase
+                    .resource_delta
+                    .rss_delta_kb
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| DASH.to_string()),
+                kb_text(phase.resource_delta.high_water_rss_kb),
+                kb_text(phase.resource_delta.max_rss_kb),
+                phase
+                    .bytes_in
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| DASH.to_string()),
+                phase
+                    .bytes_out
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| DASH.to_string())
+            );
+        }
+    }
     println!("--- raw transcript ---");
     println!("{}", input.raw_transcript);
     println!("--- normalized transcript ---");
@@ -132,9 +205,9 @@ fn render_benchmark_table(input: &TipBenchmarkInput<'_>) -> String {
         Some(ms(input.provider_init_duration)),
         None,
         None,
-        None,
-        None,
-        None,
+        phase_cpu_ms(input, "backend.init"),
+        phase_cpu_percent(input, "backend.init"),
+        phase_rss_delta_kb(input, "backend.init"),
     ));
     table.add_row(row(
         "Rec. active",
@@ -150,18 +223,24 @@ fn render_benchmark_table(input: &TipBenchmarkInput<'_>) -> String {
         Some(ms(input.preprocess_duration)),
         None,
         None,
-        None,
-        None,
-        None,
+        phase_cpu_ms(input, "preprocess.fast_vad"),
+        phase_cpu_percent(input, "preprocess.fast_vad"),
+        phase_rss_delta_kb(input, "preprocess.fast_vad"),
     ));
     table.add_row(row(
         "Fast VAD Trim",
         input.fast_vad_duration.map(ms),
         Some(sent_audio_ms),
         Some(processed_audio_kb),
-        None,
-        None,
-        None,
+        input
+            .fast_vad_duration
+            .and_then(|_| phase_cpu_ms(input, "preprocess.fast_vad")),
+        input
+            .fast_vad_duration
+            .and_then(|_| phase_cpu_percent(input, "preprocess.fast_vad")),
+        input
+            .fast_vad_duration
+            .and_then(|_| phase_rss_delta_kb(input, "preprocess.fast_vad")),
     ));
     table.add_row(row(
         "Encode",
@@ -171,9 +250,9 @@ fn render_benchmark_table(input: &TipBenchmarkInput<'_>) -> String {
             .backend_metrics
             .encoded_bytes
             .map(|bytes| bytes as f64 / 1024.0),
-        None,
-        None,
-        None,
+        backend_encode_phase(input).map(backend_phase_cpu_ms),
+        backend_encode_phase(input).and_then(|phase| phase.resource_delta.cpu_percent),
+        backend_encode_phase(input).and_then(backend_phase_rss_delta_kb),
     ));
     table.add_row(row(
         "Upload",
@@ -198,27 +277,27 @@ fn render_benchmark_table(input: &TipBenchmarkInput<'_>) -> String {
         Some(ms(input.backend_metrics.transcription_duration)),
         Some(sent_audio_ms),
         sent_audio_kb,
-        None,
-        None,
-        None,
+        backend_transcription_phase(input).map(backend_phase_cpu_ms),
+        backend_transcription_phase(input).and_then(|phase| phase.resource_delta.cpu_percent),
+        backend_transcription_phase(input).and_then(backend_phase_rss_delta_kb),
     ));
     table.add_row(row(
         "Transcribe wall",
         Some(ms(input.backend_wall_duration)),
         Some(sent_audio_ms),
         sent_audio_kb,
-        None,
-        None,
-        None,
+        phase_cpu_ms(input, "backend.transcribe"),
+        phase_cpu_percent(input, "backend.transcribe"),
+        phase_rss_delta_kb(input, "backend.transcribe"),
     ));
     table.add_row(row(
         "Normalization",
         Some(ms(input.normalize_duration)),
         None,
         None,
-        None,
-        None,
-        None,
+        phase_cpu_ms(input, "normalize.total"),
+        phase_cpu_percent(input, "normalize.total"),
+        phase_rss_delta_kb(input, "normalize.total"),
     ));
     table.add_row(row(
         "Total",
@@ -240,6 +319,54 @@ fn render_benchmark_table(input: &TipBenchmarkInput<'_>) -> String {
     ]));
 
     table.trim_fmt()
+}
+
+fn phase_cpu_ms(input: &TipBenchmarkInput<'_>, name: &str) -> Option<f64> {
+    phase(input, name).map(|sample| ms(sample.resource_delta.total_cpu))
+}
+
+fn phase_cpu_percent(input: &TipBenchmarkInput<'_>, name: &str) -> Option<f64> {
+    phase(input, name).and_then(|sample| sample.resource_delta.cpu_percent)
+}
+
+fn phase_rss_delta_kb(input: &TipBenchmarkInput<'_>, name: &str) -> Option<f64> {
+    phase(input, name)
+        .and_then(|sample| sample.resource_delta.rss_delta_kb.map(|value| value as f64))
+}
+
+fn phase<'a>(input: &'a TipBenchmarkInput<'_>, name: &str) -> Option<&'a TipPhaseSample> {
+    input
+        .timeline_samples
+        .iter()
+        .rev()
+        .find(|sample| sample.name == name)
+}
+
+fn backend_encode_phase<'a>(input: &'a TipBenchmarkInput<'_>) -> Option<&'a BackendPhaseMetric> {
+    input.backend_metrics.phases.iter().find(|phase| {
+        matches!(
+            phase.name,
+            "backend.encode.flac" | "backend.whisper.temp_wav"
+        )
+    })
+}
+
+fn backend_transcription_phase<'a>(
+    input: &'a TipBenchmarkInput<'_>,
+) -> Option<&'a BackendPhaseMetric> {
+    input
+        .backend_metrics
+        .phases
+        .iter()
+        .find(|phase| matches!(phase.name, "backend.groq.request" | "backend.whisper.cli"))
+}
+
+fn backend_phase_cpu_ms(phase: &BackendPhaseMetric) -> f64 {
+    ms(phase.resource_delta.total_cpu)
+}
+
+fn backend_phase_rss_delta_kb(phase: &BackendPhaseMetric) -> Option<f64> {
+    phase.resource_delta.rss_delta_kb.map(|value| value as f64)
 }
 
 fn row(

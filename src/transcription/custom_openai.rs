@@ -1,9 +1,9 @@
 use crate::config::{CustomProviderConfig, SubscriptionAuthSource};
-use crate::transcription::audio::{EncodedAudio, encode_to_flac, encode_to_wav};
+use crate::transcription::audio::{encode_to_flac, encode_to_wav, EncodedAudio};
 use crate::transcription::postprocess::clean_transcription;
 use crate::transcription::{BackendMetrics, TranscriptionResult};
 use anyhow::{Context, Result};
-use reqwest::{Client, Url, header, multipart};
+use reqwest::{header, multipart, Client, Url};
 use serde::Deserialize;
 use std::cmp;
 use std::time::{Duration, Instant};
@@ -149,6 +149,7 @@ impl CustomOpenAiTranscriber {
             upload_duration: Some(timings.upload),
             response_duration: Some(timings.response),
             transcription_duration,
+            phases: Vec::new(),
         };
 
         Ok(TranscriptionResult {

@@ -4,6 +4,7 @@ mod gemini;
 mod groq;
 #[cfg(feature = "parakeet")]
 mod parakeet;
+mod phase_metrics;
 mod postprocess;
 mod prompt;
 
@@ -23,6 +24,8 @@ pub use gemini::GeminiTranscriber;
 pub use groq::GroqTranscriber;
 #[cfg(feature = "parakeet")]
 pub use parakeet::ParakeetTranscriber;
+pub(crate) use phase_metrics::BackendPhaseProbe;
+pub use phase_metrics::{BackendPhaseMetric, BackendResourceDelta};
 pub use postprocess::{clean_transcription, contains_only_non_speech_markers, is_prompt_artifact};
 pub use prompt::{PromptBlueprint, DEFAULT_PROMPT};
 
@@ -42,6 +45,7 @@ pub struct BackendMetrics {
     pub upload_duration: Option<Duration>,
     pub response_duration: Option<Duration>,
     pub transcription_duration: Duration,
+    pub phases: Vec<BackendPhaseMetric>,
 }
 
 #[derive(Debug, Clone)]

@@ -12,11 +12,12 @@ use std::time::{Duration, Instant};
 
 mod bench_report;
 mod diff_report;
+mod resource_timeline;
 mod resource_usage;
 
 use bench_report::{print_case_report, TipBenchmarkInput};
 use diff_report::assert_text_eq;
-use resource_usage::ResourceSnapshot;
+use resource_timeline::TipResourceTimeline;
 
 const SAMPLE_RATE_HZ: u32 = 16_000;
 const PROVIDERS_ENV: &str = "HYPRWHSPR_TIP_PROVIDERS";
@@ -86,9 +87,19 @@ async fn tip_whisper_cpp_with_fast_vad_matches_expected_transform() -> Result<()
 }
 
 async fn run_live_case(provider: &'static ProviderSpec, fast_vad_mode: FastVadMode) -> Result<()> {
-    let fixture = load_standard_recording()?;
-    let expected = read_fixture_text("golden-script-expected-transform.txt")?;
-    let config_manager = ConfigManager::load().context("load real hyprwhspr-rs config")?;
+    let mut timeline = TipResourceTimeline::new();
+    let fixture = timeline.measure("fixture.load_wav", None, None, load_standard_recording)?;
+    timeline.set_latest_bytes_out(
+        "fixture.load_wav",
+        fixture.samples.len() * std::mem::size_of::<f32>(),
+    );
+    let expected = timeline.measure("fixture.load_expected", None, None, || {
+        read_fixture_text("golden-script-expected-transform.txt")
+    })?;
+    timeline.set_latest_bytes_out("fixture.load_expected", expected.len());
+    let config_manager = timeline.measure("config.load", None, None, || {
+        ConfigManager::load().context("load real hyprwhspr-rs config")
+    })?;
     let mut config = config_manager.get();
     config.transcription.provider = (provider.provider)();
     config.word_overrides.clear();
@@ -108,35 +119,76 @@ async fn run_live_case(provider: &'static ProviderSpec, fast_vad_mode: FastVadMo
     one local config to rewrite the words.
     ```
     */
-    let total_start = Instant::now();
-    let resources_start = ResourceSnapshot::capture();
-
-    let preprocess_start = Instant::now();
-    let preprocessed = preprocess_for_case(&config, fast_vad_mode, &fixture)?;
-    let preprocess_duration = preprocess_start.elapsed();
+    let preprocessed = timeline.measure(
+        "preprocess.fast_vad",
+        Some(fixture.samples.len() * std::mem::size_of::<f32>()),
+        None,
+        || preprocess_for_case(&config, fast_vad_mode, &fixture),
+    )?;
+    timeline.set_latest_bytes_out(
+        "preprocess.fast_vad",
+        preprocessed.audio.len() * std::mem::size_of::<f32>(),
+    );
+    let preprocess_duration = timeline
+        .samples()
+        .iter()
+        .rev()
+        .find(|sample| sample.name == "preprocess.fast_vad")
+        .map(|sample| sample.wall_duration)
+        .unwrap_or_default();
 
     let vad_options = WhisperVadOptions::disabled();
-    let init_start = Instant::now();
-    let backend = TranscriptionBackend::build(&config_manager, &config, vad_options)
-        .with_context(|| format!("build {} backend", provider.id))?;
+    let backend = timeline.measure("backend.init", None, None, || {
+        let backend = TranscriptionBackend::build(&config_manager, &config, vad_options)
+            .with_context(|| format!("build {} backend", provider.id))?;
+        backend
+            .initialize()
+            .with_context(|| format!("initialize {} backend", provider.id))?;
+        Ok(backend)
+    })?;
+    let provider_init_duration = timeline
+        .samples()
+        .iter()
+        .rev()
+        .find(|sample| sample.name == "backend.init")
+        .map(|sample| sample.wall_duration)
+        .unwrap_or_default();
 
-    backend
-        .initialize()
-        .with_context(|| format!("initialize {} backend", provider.id))?;
-    let provider_init_duration = init_start.elapsed();
+    let result = timeline
+        .measure_async(
+            "backend.transcribe",
+            Some(preprocessed.audio.len() * std::mem::size_of::<f32>()),
+            None,
+            || async {
+                backend
+                    .transcribe(preprocessed.audio.clone())
+                    .await
+                    .with_context(|| format!("transcribe with {}", provider.id))
+            },
+        )
+        .await?;
+    timeline.set_latest_bytes_out("backend.transcribe", result.text.len());
+    let wall_duration = timeline
+        .samples()
+        .iter()
+        .rev()
+        .find(|sample| sample.name == "backend.transcribe")
+        .map(|sample| sample.wall_duration)
+        .unwrap_or_default();
 
-    let transcribe_start = Instant::now();
-    let result = backend
-        .transcribe(preprocessed.audio.clone())
-        .await
-        .with_context(|| format!("transcribe with {}", provider.id))?;
-    let wall_duration = transcribe_start.elapsed();
-
-    let normalize_start = Instant::now();
-    let normalized = normalize_without_overrides(&result.text);
-    let normalize_duration = normalize_start.elapsed();
-    let resources_end = ResourceSnapshot::capture();
-    let total_duration = total_start.elapsed();
+    let normalized = timeline.measure("normalize.total", Some(result.text.len()), None, || {
+        Ok(normalize_without_overrides(&result.text))
+    })?;
+    timeline.set_latest_bytes_out("normalize.total", normalized.len());
+    let normalize_duration = timeline
+        .samples()
+        .iter()
+        .rev()
+        .find(|sample| sample.name == "normalize.total")
+        .map(|sample| sample.wall_duration)
+        .unwrap_or_default();
+    let total_duration = timeline.elapsed();
+    let resource_delta = timeline.total_delta();
 
     print_case_report(TipBenchmarkInput {
         provider_label: provider.label,
@@ -154,7 +206,8 @@ async fn run_live_case(provider: &'static ProviderSpec, fast_vad_mode: FastVadMo
         backend_metrics: &result.metrics,
         normalize_duration,
         total_duration,
-        resource_delta: resources_start.delta(resources_end, total_duration),
+        resource_delta,
+        timeline_samples: timeline.samples(),
         raw_transcript: &result.text,
         normalized: &normalized,
         expected: &expected,

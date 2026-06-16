@@ -1,8 +1,90 @@
 use std::fs;
-use std::time::Duration;
+use std::future::Future;
+use std::time::{Duration, Instant};
+
+#[derive(Debug, Clone)]
+pub struct BackendPhaseMetric {
+    pub name: &'static str,
+    pub wall_duration: Duration,
+    pub resource_delta: BackendResourceDelta,
+    pub bytes_in: Option<usize>,
+    pub bytes_out: Option<usize>,
+}
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct ResourceSnapshot {
+pub struct BackendResourceDelta {
+    pub self_user_cpu: Duration,
+    pub self_system_cpu: Duration,
+    pub child_user_cpu: Duration,
+    pub child_system_cpu: Duration,
+    pub total_cpu: Duration,
+    pub cpu_percent: Option<f64>,
+    pub rss_delta_kb: Option<i64>,
+    pub high_water_rss_kb: Option<u64>,
+    pub max_rss_kb: Option<u64>,
+}
+
+impl BackendPhaseMetric {
+    pub(crate) fn set_bytes_out(&mut self, bytes_out: usize) {
+        self.bytes_out = Some(bytes_out);
+    }
+}
+
+pub(crate) struct BackendPhaseProbe;
+
+impl BackendPhaseProbe {
+    pub(crate) fn measure<T, E>(
+        name: &'static str,
+        bytes_in: Option<usize>,
+        operation: impl FnOnce() -> Result<T, E>,
+    ) -> (Result<T, E>, BackendPhaseMetric) {
+        let started_at = Instant::now();
+        let start = ResourceSnapshot::capture();
+        let result = operation();
+        let wall_duration = started_at.elapsed();
+        let end = ResourceSnapshot::capture();
+
+        (
+            result,
+            BackendPhaseMetric {
+                name,
+                wall_duration,
+                resource_delta: start.delta(end, wall_duration),
+                bytes_in,
+                bytes_out: None,
+            },
+        )
+    }
+
+    pub(crate) async fn measure_async<T, E, Fut>(
+        name: &'static str,
+        bytes_in: Option<usize>,
+        operation: impl FnOnce() -> Fut,
+    ) -> (Result<T, E>, BackendPhaseMetric)
+    where
+        Fut: Future<Output = Result<T, E>>,
+    {
+        let started_at = Instant::now();
+        let start = ResourceSnapshot::capture();
+        let result = operation().await;
+        let wall_duration = started_at.elapsed();
+        let end = ResourceSnapshot::capture();
+
+        (
+            result,
+            BackendPhaseMetric {
+                name,
+                wall_duration,
+                resource_delta: start.delta(end, wall_duration),
+                bytes_in,
+                bytes_out: None,
+            },
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ResourceSnapshot {
     self_user_cpu: Duration,
     self_system_cpu: Duration,
     child_user_cpu: Duration,
@@ -12,25 +94,8 @@ pub(crate) struct ResourceSnapshot {
     max_rss_kb: Option<u64>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct ResourceDelta {
-    pub(crate) self_user_cpu: Duration,
-    pub(crate) self_system_cpu: Duration,
-    pub(crate) child_user_cpu: Duration,
-    pub(crate) child_system_cpu: Duration,
-    pub(crate) user_cpu: Duration,
-    pub(crate) system_cpu: Duration,
-    pub(crate) total_cpu: Duration,
-    pub(crate) cpu_percent: Option<f64>,
-    pub(crate) rss_start_kb: Option<u64>,
-    pub(crate) rss_end_kb: Option<u64>,
-    pub(crate) rss_delta_kb: Option<i64>,
-    pub(crate) high_water_rss_kb: Option<u64>,
-    pub(crate) max_rss_kb: Option<u64>,
-}
-
 impl ResourceSnapshot {
-    pub(crate) fn capture() -> Self {
+    fn capture() -> Self {
         let self_usage = usage(libc::RUSAGE_SELF);
         let child_usage = usage(libc::RUSAGE_CHILDREN);
         let status = read_proc_status();
@@ -46,31 +111,28 @@ impl ResourceSnapshot {
         }
     }
 
-    pub(crate) fn delta(self, end: Self, wall_duration: Duration) -> ResourceDelta {
+    fn delta(self, end: Self, wall_duration: Duration) -> BackendResourceDelta {
         let self_user_cpu = end.self_user_cpu.saturating_sub(self.self_user_cpu);
         let self_system_cpu = end.self_system_cpu.saturating_sub(self.self_system_cpu);
         let child_user_cpu = end.child_user_cpu.saturating_sub(self.child_user_cpu);
         let child_system_cpu = end.child_system_cpu.saturating_sub(self.child_system_cpu);
-        let user_cpu = self_user_cpu.saturating_add(child_user_cpu);
-        let system_cpu = self_system_cpu.saturating_add(child_system_cpu);
-        let total_cpu = user_cpu.saturating_add(system_cpu);
+        let total_cpu = self_user_cpu
+            .saturating_add(self_system_cpu)
+            .saturating_add(child_user_cpu)
+            .saturating_add(child_system_cpu);
         let cpu_percent = if wall_duration.is_zero() {
             None
         } else {
             Some((total_cpu.as_secs_f64() / wall_duration.as_secs_f64()) * 100.0)
         };
 
-        ResourceDelta {
+        BackendResourceDelta {
             self_user_cpu,
             self_system_cpu,
             child_user_cpu,
             child_system_cpu,
-            user_cpu,
-            system_cpu,
             total_cpu,
             cpu_percent,
-            rss_start_kb: self.rss_kb,
-            rss_end_kb: end.rss_kb,
             rss_delta_kb: self
                 .rss_kb
                 .zip(end.rss_kb)

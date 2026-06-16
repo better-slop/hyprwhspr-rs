@@ -9,10 +9,16 @@ Ignored, expensive, prod-ish tests for transcription + normalization correctness
 - Config: real `ConfigManager::load()`
 - Overrides: always empty `word_overrides`
 - Providers: configured by the provider matrix in `live_transcription.rs`
-- Metrics: timing table, backend metrics, CPU from `getrusage`, RSS from `/proc/self/status`
+- Metrics: timing table, backend metrics, phase CPU from `getrusage`, RSS from `/proc/self/status`
 - Failures: wrapped text-pipeline block plus `similar` unified diff and colorized inline diff
 
 `word_overrides` stay out of this suite on purpose. They are user-local aliases after the shared pipeline and can hide ITN/spacing bugs.
+
+## Profiling model
+
+- Always-on: `TipResourceTimeline` wraps fixture load, config load, fast VAD, backend init, backend transcription, and normalization.
+- Backend internals: Groq and whisper.cpp emit backend phase metrics for encode/request/temp-WAV/CLI; request upload/response splits still come from `BackendMetrics` timing fields.
+- Deep allocation stacks: use `tests/tip/profile.sh` with `heaptrack`.
 
 ## Run
 
@@ -40,6 +46,12 @@ Target providers/modes:
 HYPRWHSPR_TIP_PROVIDERS=groq HYPRWHSPR_TIP_FAST_VAD=disabled cargo test --test tip_live_transcription tip_selected_live_transcription_matches_expected_transform -- --ignored --nocapture
 HYPRWHSPR_TIP_PROVIDERS=whisper_cpp HYPRWHSPR_TIP_FAST_VAD=enabled cargo test --test tip_live_transcription tip_selected_live_transcription_matches_expected_transform -- --ignored --nocapture
 HYPRWHSPR_TIP_PROVIDERS=groq,whisper_cpp HYPRWHSPR_TIP_FAST_VAD=both cargo test --test tip_live_transcription tip_selected_live_transcription_matches_expected_transform -- --ignored --nocapture
+```
+
+Allocation-stack profile:
+
+```bash
+HYPRWHSPR_TIP_PROVIDERS=whisper_cpp HYPRWHSPR_TIP_FAST_VAD=enabled tests/tip/profile.sh
 ```
 
 Individual cases:
