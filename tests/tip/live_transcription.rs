@@ -2,14 +2,36 @@ use anyhow::{bail, Context, Result};
 use hyprwhspr_rs::audio::FastVad;
 use hyprwhspr_rs::config::{Config, ConfigManager, TranscriptionProvider};
 use hyprwhspr_rs::text::NormalizeTextService;
-use hyprwhspr_rs::transcription::{BackendMetrics, TranscriptionBackend};
+use hyprwhspr_rs::transcription::TranscriptionBackend;
 use hyprwhspr_rs::whisper::WhisperVadOptions;
 use std::collections::HashMap;
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+mod bench_report;
+mod resource_usage;
+
+use bench_report::{print_case_report, TipBenchmarkInput};
+use resource_usage::ResourceSnapshot;
+
 const SAMPLE_RATE_HZ: u32 = 16_000;
+const PROVIDERS_ENV: &str = "HYPRWHSPR_TIP_PROVIDERS";
+const FAST_VAD_ENV: &str = "HYPRWHSPR_TIP_FAST_VAD";
+
+const PROVIDERS: &[ProviderSpec] = &[
+    ProviderSpec {
+        id: "groq",
+        label: "Groq",
+        provider: groq_provider,
+    },
+    ProviderSpec {
+        id: "whisper_cpp",
+        label: "whisper.cpp",
+        provider: whisper_cpp_provider,
+    },
+];
 
 #[test]
 #[ignore = "TIP golden test: expected to fail until NormalizeTextService reaches the desired target"]
@@ -23,35 +45,50 @@ fn tip_normalization_golden_script_matches_expected_transform() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore = "TIP live inference: selected providers/modes consume remote or local compute"]
+async fn tip_selected_live_transcription_matches_expected_transform() -> Result<()> {
+    let providers = selected_providers()?;
+    let modes = selected_fast_vad_modes()?;
+
+    for provider in providers {
+        for mode in &modes {
+            run_live_case(provider, *mode).await?;
+        }
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
 #[ignore = "TIP live inference: calls Groq and consumes paid/remote compute"]
 async fn tip_groq_without_fast_vad_matches_expected_transform() -> Result<()> {
-    run_live_case(TranscriptionProvider::Groq, FastVadMode::Disabled).await
+    run_live_case(provider_by_id("groq")?, FastVadMode::Disabled).await
 }
 
 #[tokio::test]
 #[ignore = "TIP live inference: calls Groq and consumes paid/remote compute"]
 async fn tip_groq_with_fast_vad_matches_expected_transform() -> Result<()> {
-    run_live_case(TranscriptionProvider::Groq, FastVadMode::Enabled).await
+    run_live_case(provider_by_id("groq")?, FastVadMode::Enabled).await
 }
 
 #[tokio::test]
 #[ignore = "TIP live inference: runs local whisper.cpp"]
 async fn tip_whisper_cpp_without_fast_vad_matches_expected_transform() -> Result<()> {
-    run_live_case(TranscriptionProvider::WhisperCpp, FastVadMode::Disabled).await
+    run_live_case(provider_by_id("whisper_cpp")?, FastVadMode::Disabled).await
 }
 
 #[tokio::test]
 #[ignore = "TIP live inference: runs local whisper.cpp"]
 async fn tip_whisper_cpp_with_fast_vad_matches_expected_transform() -> Result<()> {
-    run_live_case(TranscriptionProvider::WhisperCpp, FastVadMode::Enabled).await
+    run_live_case(provider_by_id("whisper_cpp")?, FastVadMode::Enabled).await
 }
 
-async fn run_live_case(provider: TranscriptionProvider, fast_vad_mode: FastVadMode) -> Result<()> {
+async fn run_live_case(provider: &'static ProviderSpec, fast_vad_mode: FastVadMode) -> Result<()> {
     let fixture = load_standard_recording()?;
     let expected = read_fixture_text("golden-script-expected-transform.txt")?;
     let config_manager = ConfigManager::load().context("load real hyprwhspr-rs config")?;
     let mut config = config_manager.get();
-    config.transcription.provider = provider.clone();
+    config.transcription.provider = (provider.provider)();
     config.word_overrides.clear();
     config.transcription.whisper_cpp.vad.enabled = false;
 
@@ -69,33 +106,53 @@ async fn run_live_case(provider: TranscriptionProvider, fast_vad_mode: FastVadMo
     one local config to rewrite the words.
     ```
     */
+    let total_start = Instant::now();
+    let resources_start = ResourceSnapshot::capture();
+
+    let preprocess_start = Instant::now();
     let preprocessed = preprocess_for_case(&config, fast_vad_mode, &fixture)?;
+    let preprocess_duration = preprocess_start.elapsed();
+
     let vad_options = WhisperVadOptions::disabled();
+    let init_start = Instant::now();
     let backend = TranscriptionBackend::build(&config_manager, &config, vad_options)
-        .with_context(|| format!("build {} backend", provider_label(&provider)))?;
+        .with_context(|| format!("build {} backend", provider.id))?;
 
     backend
         .initialize()
-        .with_context(|| format!("initialize {} backend", provider_label(&provider)))?;
+        .with_context(|| format!("initialize {} backend", provider.id))?;
+    let provider_init_duration = init_start.elapsed();
 
     let transcribe_start = Instant::now();
     let result = backend
         .transcribe(preprocessed.audio.clone())
         .await
-        .with_context(|| format!("transcribe with {}", provider_label(&provider)))?;
+        .with_context(|| format!("transcribe with {}", provider.id))?;
     let wall_duration = transcribe_start.elapsed();
-    let normalized = normalize_without_overrides(&result.text);
 
-    print_case_report(CaseReport {
-        provider: provider_label(&provider),
+    let normalize_start = Instant::now();
+    let normalized = normalize_without_overrides(&result.text);
+    let normalize_duration = normalize_start.elapsed();
+    let resources_end = ResourceSnapshot::capture();
+    let total_duration = total_start.elapsed();
+
+    print_case_report(TipBenchmarkInput {
+        provider_label: provider.label,
+        provider_id: provider.id,
         fast_vad_mode,
         original_samples: fixture.samples.len(),
+        sample_rate_hz: fixture.sample_rate_hz,
+        preprocess_duration,
+        provider_init_duration,
         audio_sent_samples: preprocessed.audio.len(),
         fast_vad_duration: preprocessed.fast_vad_duration,
         fast_vad_segments: preprocessed.fast_vad_segments,
         fast_vad_dropped_samples: preprocessed.fast_vad_dropped_samples,
         backend_wall_duration: wall_duration,
         backend_metrics: &result.metrics,
+        normalize_duration,
+        total_duration,
+        resource_delta: resources_start.delta(resources_end, total_duration),
         raw_transcript: &result.text,
         normalized: &normalized,
         expected: &expected,
@@ -104,7 +161,7 @@ async fn run_live_case(provider: TranscriptionProvider, fast_vad_mode: FastVadMo
     assert_text_eq(
         &format!(
             "{} {} normalized transcript",
-            provider_label(&provider),
+            provider.id,
             fast_vad_mode.label()
         ),
         &expected,
@@ -112,6 +169,63 @@ async fn run_live_case(provider: TranscriptionProvider, fast_vad_mode: FastVadMo
     );
 
     Ok(())
+}
+
+fn selected_providers() -> Result<Vec<&'static ProviderSpec>> {
+    let Some(raw) = env::var(PROVIDERS_ENV)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return Ok(PROVIDERS.iter().collect());
+    };
+
+    if raw.trim().eq_ignore_ascii_case("all") {
+        return Ok(PROVIDERS.iter().collect());
+    }
+
+    raw.split(',')
+        .map(|part| provider_by_id(part.trim()))
+        .collect::<Result<Vec<_>>>()
+}
+
+fn selected_fast_vad_modes() -> Result<Vec<FastVadMode>> {
+    let Some(raw) = env::var(FAST_VAD_ENV)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return Ok(vec![FastVadMode::Disabled, FastVadMode::Enabled]);
+    };
+
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "all" | "both" => Ok(vec![FastVadMode::Disabled, FastVadMode::Enabled]),
+        "on" | "yes" | "true" | "enabled" | "with" | "with_fast_vad" => {
+            Ok(vec![FastVadMode::Enabled])
+        }
+        "off" | "no" | "false" | "disabled" | "without" | "without_fast_vad" => {
+            Ok(vec![FastVadMode::Disabled])
+        }
+        other => bail!("unknown {FAST_VAD_ENV} value '{other}'; use both, enabled, or disabled"),
+    }
+}
+
+fn provider_by_id(id: &str) -> Result<&'static ProviderSpec> {
+    PROVIDERS
+        .iter()
+        .find(|provider| provider.id == id)
+        .with_context(|| {
+            format!(
+                "unknown provider '{id}'; known providers: {}",
+                provider_ids()
+            )
+        })
+}
+
+fn provider_ids() -> String {
+    PROVIDERS
+        .iter()
+        .map(|provider| provider.id)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn preprocess_for_case(
@@ -250,112 +364,110 @@ fn assert_text_eq(label: &str, expected: &str, actual: &str) {
     }
 
     panic!(
-        "{label} mismatch\n\n--- expected fixture ---\n{expected}\n\n--- actual output ---\n{actual}\n\n--- line diff ---\n{}",
-        line_diff(expected, actual)
+        "{label} mismatch\n\n{}",
+        render_wrapped_text_pipeline_diff(expected, actual)
     );
 }
 
-fn line_diff(expected: &str, actual: &str) -> String {
-    let expected_lines = expected.lines().collect::<Vec<_>>();
-    let actual_lines = actual.lines().collect::<Vec<_>>();
-    let max = expected_lines.len().max(actual_lines.len());
-    let mut out = String::new();
+fn render_wrapped_text_pipeline_diff(expected: &str, actual: &str) -> String {
+    let mut lines = Vec::new();
+    lines.push("┌─ Text Pipeline (steps: 1, changed: 1)".to_string());
+    push_wrapped_body(&mut lines, "IN  : ", expected);
+    push_wrapped_body(&mut lines, "• expected_vs_actual (applied)", "");
+    push_wrapped_body(&mut lines, "  - ", expected);
+    push_wrapped_body(&mut lines, "  + ", actual);
+    push_wrapped_body(&mut lines, "OUT : ", actual);
+    lines.push("└─".to_string());
+    lines.join("\n")
+}
 
-    for idx in 0..max {
-        let line_no = idx + 1;
-        match (expected_lines.get(idx), actual_lines.get(idx)) {
-            (Some(expected), Some(actual)) if expected == actual => {}
-            (Some(expected), Some(actual)) => {
-                out.push_str(&format!("line {line_no}\n- {expected}\n+ {actual}\n"));
-            }
-            (Some(expected), None) => {
-                out.push_str(&format!("line {line_no}\n- {expected}\n+ <missing>\n"))
-            }
-            (None, Some(actual)) => {
-                out.push_str(&format!("line {line_no}\n- <missing>\n+ {actual}\n"))
-            }
-            (None, None) => {}
+fn push_wrapped_body(lines: &mut Vec<String>, label: &str, value: &str) {
+    const WRAP_CHARS: usize = 118;
+    let escaped = escape_visible(value);
+    let content = format!("{label}{escaped}");
+
+    for segment in wrap_chars(&content, WRAP_CHARS) {
+        lines.push(format!("│ {segment}"));
+    }
+}
+
+fn wrap_chars(value: &str, limit: usize) -> Vec<String> {
+    if value.is_empty() {
+        return vec![String::new()];
+    }
+
+    let mut lines = Vec::new();
+    let mut remaining = value.trim_end();
+
+    while remaining.chars().count() > limit {
+        let split_at = split_boundary(remaining, limit);
+        let (line, rest) = remaining.split_at(split_at);
+        lines.push(line.trim_end().to_string());
+        remaining = rest.trim_start();
+    }
+
+    if !remaining.is_empty() {
+        lines.push(remaining.to_string());
+    }
+
+    lines
+}
+
+fn split_boundary(value: &str, limit: usize) -> usize {
+    let hard_limit = value
+        .char_indices()
+        .nth(limit)
+        .map(|(idx, _)| idx)
+        .unwrap_or(value.len());
+    let candidate = &value[..hard_limit];
+
+    candidate
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| ch.is_whitespace())
+        .map(|(idx, _)| idx)
+        .filter(|idx| *idx > 0)
+        .unwrap_or(hard_limit)
+}
+
+fn escape_visible(value: &str) -> String {
+    let mut rendered = String::with_capacity(value.len());
+
+    for ch in value.chars() {
+        match ch {
+            '\n' => rendered.push('⏎'),
+            '\t' => rendered.push('⇥'),
+            '\r' => rendered.push('␍'),
+            _ => rendered.push(ch),
         }
     }
 
-    out
+    rendered
 }
 
-fn print_case_report(report: CaseReport<'_>) {
-    println!();
-    println!("=== TIP live transcription benchmark ===");
-    println!("provider: {}", report.provider);
-    println!("fast_vad: {}", report.fast_vad_mode.label());
-    println!("original_samples: {}", report.original_samples);
-    println!("audio_sent_samples: {}", report.audio_sent_samples);
-    println!(
-        "audio_sent_duration_s: {:.3}",
-        report.audio_sent_samples as f64 / SAMPLE_RATE_HZ as f64
-    );
-    if let Some(duration) = report.fast_vad_duration {
-        println!("fast_vad_ms: {:.3}", duration_ms(duration));
-    }
-    if let Some(segments) = report.fast_vad_segments {
-        println!("fast_vad_segments: {segments}");
-    }
-    if let Some(dropped) = report.fast_vad_dropped_samples {
-        println!("fast_vad_dropped_samples: {dropped}");
-    }
-    println!(
-        "backend_wall_ms: {:.3}",
-        duration_ms(report.backend_wall_duration)
-    );
-    print_backend_metrics(report.backend_metrics);
-    println!("--- raw transcript ---");
-    println!("{}", report.raw_transcript);
-    println!("--- normalized transcript ---");
-    println!("{}", report.normalized);
-    println!("--- expected transform fixture ---");
-    println!("{}", report.expected);
-    println!("=== end TIP benchmark ===");
+fn groq_provider() -> TranscriptionProvider {
+    TranscriptionProvider::Groq
 }
 
-fn print_backend_metrics(metrics: &BackendMetrics) {
-    if let Some(duration) = metrics.encode_duration {
-        println!("backend_encode_ms: {:.3}", duration_ms(duration));
-    }
-    if let Some(bytes) = metrics.encoded_bytes {
-        println!("backend_encoded_bytes: {bytes}");
-    }
-    if let Some(duration) = metrics.upload_duration {
-        println!("backend_upload_ms: {:.3}", duration_ms(duration));
-    }
-    if let Some(duration) = metrics.response_duration {
-        println!("backend_response_parse_ms: {:.3}", duration_ms(duration));
-    }
-    println!(
-        "backend_transcription_ms: {:.3}",
-        duration_ms(metrics.transcription_duration)
-    );
-}
-
-fn duration_ms(duration: Duration) -> f64 {
-    duration.as_secs_f64() * 1000.0
-}
-
-fn provider_label(provider: &TranscriptionProvider) -> &'static str {
-    match provider {
-        TranscriptionProvider::WhisperCpp => "whisper_cpp",
-        TranscriptionProvider::Groq => "groq",
-        TranscriptionProvider::Gemini => "gemini",
-        TranscriptionProvider::Parakeet => "parakeet",
-        TranscriptionProvider::Custom(_) => "custom",
-    }
+fn whisper_cpp_provider() -> TranscriptionProvider {
+    TranscriptionProvider::WhisperCpp
 }
 
 #[derive(Debug, Clone, Copy)]
-enum FastVadMode {
+struct ProviderSpec {
+    id: &'static str,
+    label: &'static str,
+    provider: fn() -> TranscriptionProvider,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum FastVadMode {
     Disabled,
     Enabled,
 }
 
 impl FastVadMode {
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Disabled => "without_fast_vad",
             Self::Enabled => "with_fast_vad",
@@ -383,19 +495,4 @@ struct WavFmt {
     channels: u16,
     sample_rate_hz: u32,
     bits_per_sample: u16,
-}
-
-struct CaseReport<'a> {
-    provider: &'static str,
-    fast_vad_mode: FastVadMode,
-    original_samples: usize,
-    audio_sent_samples: usize,
-    fast_vad_duration: Option<Duration>,
-    fast_vad_segments: Option<usize>,
-    fast_vad_dropped_samples: Option<usize>,
-    backend_wall_duration: Duration,
-    backend_metrics: &'a BackendMetrics,
-    raw_transcript: &'a str,
-    normalized: &'a str,
-    expected: &'a str,
 }
