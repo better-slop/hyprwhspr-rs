@@ -8,11 +8,24 @@ pub(crate) fn assert_text_eq(label: &str, expected: &str, actual: &str) {
         return;
     }
 
-    panic!(
+    panic!("{}", text_diff_report(label, expected, actual));
+}
+
+pub(crate) fn print_text_diff_report(label: &str, expected: &str, actual: &str) {
+    if expected == actual {
+        println!("{label}: expected output matched actual output");
+        return;
+    }
+
+    println!("{}", text_diff_report(label, expected, actual));
+}
+
+fn text_diff_report(label: &str, expected: &str, actual: &str) -> String {
+    format!(
         "{label} mismatch\n\n{}\n\n{}",
         render_wrapped_text_pipeline_diff(expected, actual),
         render_similar_report(expected, actual)
-    );
+    )
 }
 
 fn render_wrapped_text_pipeline_diff(expected: &str, actual: &str) -> String {

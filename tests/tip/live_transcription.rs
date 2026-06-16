@@ -16,7 +16,7 @@ mod resource_timeline;
 mod resource_usage;
 
 use bench_report::{print_case_report, TipBenchmarkInput};
-use diff_report::assert_text_eq;
+use diff_report::{assert_text_eq, print_text_diff_report};
 use resource_timeline::TipResourceTimeline;
 
 const SAMPLE_RATE_HZ: u32 = 16_000;
@@ -55,7 +55,22 @@ async fn tip_selected_live_transcription_matches_expected_transform() -> Result<
 
     for provider in providers {
         for mode in &modes {
-            run_live_case(provider, *mode).await?;
+            run_live_case(provider, *mode, CorrectnessMode::Assert).await?;
+        }
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "TIP profiling: runs live inference and exits cleanly for heaptrack/flame charts"]
+async fn tip_profile_live_transcription_finishes_without_assertion() -> Result<()> {
+    let providers = selected_providers()?;
+    let modes = selected_fast_vad_modes()?;
+
+    for provider in providers {
+        for mode in &modes {
+            run_live_case(provider, *mode, CorrectnessMode::ReportOnly).await?;
         }
     }
 
@@ -65,28 +80,52 @@ async fn tip_selected_live_transcription_matches_expected_transform() -> Result<
 #[tokio::test]
 #[ignore = "TIP live inference: calls Groq and consumes paid/remote compute"]
 async fn tip_groq_without_fast_vad_matches_expected_transform() -> Result<()> {
-    run_live_case(provider_by_id("groq")?, FastVadMode::Disabled).await
+    run_live_case(
+        provider_by_id("groq")?,
+        FastVadMode::Disabled,
+        CorrectnessMode::Assert,
+    )
+    .await
 }
 
 #[tokio::test]
 #[ignore = "TIP live inference: calls Groq and consumes paid/remote compute"]
 async fn tip_groq_with_fast_vad_matches_expected_transform() -> Result<()> {
-    run_live_case(provider_by_id("groq")?, FastVadMode::Enabled).await
+    run_live_case(
+        provider_by_id("groq")?,
+        FastVadMode::Enabled,
+        CorrectnessMode::Assert,
+    )
+    .await
 }
 
 #[tokio::test]
 #[ignore = "TIP live inference: runs local whisper.cpp"]
 async fn tip_whisper_cpp_without_fast_vad_matches_expected_transform() -> Result<()> {
-    run_live_case(provider_by_id("whisper_cpp")?, FastVadMode::Disabled).await
+    run_live_case(
+        provider_by_id("whisper_cpp")?,
+        FastVadMode::Disabled,
+        CorrectnessMode::Assert,
+    )
+    .await
 }
 
 #[tokio::test]
 #[ignore = "TIP live inference: runs local whisper.cpp"]
 async fn tip_whisper_cpp_with_fast_vad_matches_expected_transform() -> Result<()> {
-    run_live_case(provider_by_id("whisper_cpp")?, FastVadMode::Enabled).await
+    run_live_case(
+        provider_by_id("whisper_cpp")?,
+        FastVadMode::Enabled,
+        CorrectnessMode::Assert,
+    )
+    .await
 }
 
-async fn run_live_case(provider: &'static ProviderSpec, fast_vad_mode: FastVadMode) -> Result<()> {
+async fn run_live_case(
+    provider: &'static ProviderSpec,
+    fast_vad_mode: FastVadMode,
+    correctness_mode: CorrectnessMode,
+) -> Result<()> {
     let mut timeline = TipResourceTimeline::new();
     let fixture = timeline.measure("fixture.load_wav", None, None, load_standard_recording)?;
     timeline.set_latest_bytes_out(
@@ -213,15 +252,15 @@ async fn run_live_case(provider: &'static ProviderSpec, fast_vad_mode: FastVadMo
         expected: &expected,
     });
 
-    assert_text_eq(
-        &format!(
-            "{} {} normalized transcript",
-            provider.id,
-            fast_vad_mode.label()
-        ),
-        &expected,
-        &normalized,
+    let label = format!(
+        "{} {} normalized transcript",
+        provider.id,
+        fast_vad_mode.label()
     );
+    match correctness_mode {
+        CorrectnessMode::Assert => assert_text_eq(&label, &expected, &normalized),
+        CorrectnessMode::ReportOnly => print_text_diff_report(&label, &expected, &normalized),
+    }
 
     Ok(())
 }
@@ -441,6 +480,12 @@ impl FastVadMode {
             Self::Enabled => "with_fast_vad",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum CorrectnessMode {
+    Assert,
+    ReportOnly,
 }
 
 #[derive(Debug)]
