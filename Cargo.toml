@@ -12,6 +12,7 @@ documentation = "https://github.com/better-slop/hyprwhspr-rs#readme"
 [dependencies]
 # Async runtime
 tokio = { version = "1", features = ["io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+futures-util = "0.3"
 
 # Config & serialization
 serde = { version = "1", features = ["derive"] }
@@ -35,6 +36,7 @@ earshot = "0.1"
 # Input
 evdev = "0.12"
 udev = "0.9.3"
+tokio-udev = "0.10"
 arboard = { version = "3", features = ["wayland-data-control"] }
 enigo = { version = "0.2", default-features = false, features = ["wayland"] }
 libc = "0.2"

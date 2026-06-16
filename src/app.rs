@@ -1,9 +1,5 @@
 use anyhow::{Context, Result};
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
-use std::thread::{self, JoinHandle};
+use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, warn};
@@ -14,17 +10,10 @@ use crate::audio::{
 use crate::benchmark::BenchmarkRecorder;
 use crate::config::{Config, ConfigManager, ShortcutsConfig, TranscriptionProvider};
 use crate::control::{ControlRequest, ControlServer, RecordCommand, RecorderState};
-use crate::input::{GlobalShortcuts, ShortcutEvent, ShortcutKind, ShortcutPhase, TextInjector};
+use crate::input::{InputManagerHandle, ShortcutEvent, ShortcutKind, ShortcutPhase, TextInjector};
 use crate::status::{StatusWriter, WaybarState};
 use crate::transcription::{TranscriptionBackend, TranscriptionResult};
 use crate::whisper::WhisperVadOptions;
-
-struct ShortcutListener {
-    stop_flag: Arc<AtomicBool>,
-    handle: Option<JoinHandle<()>>,
-    shortcut: String,
-    kind: ShortcutKind,
-}
 
 fn resample_audio(samples: &[f32], src_rate: u32, dst_rate: u32) -> Vec<f32> {
     if samples.is_empty() || src_rate == 0 || dst_rate == 0 {
@@ -59,67 +48,6 @@ fn resample_audio(samples: &[f32], src_rate: u32, dst_rate: u32) -> Vec<f32> {
     }
 
     output
-}
-
-impl ShortcutListener {
-    fn spawn(
-        shortcut: String,
-        kind: ShortcutKind,
-        tx: mpsc::Sender<ShortcutEvent>,
-    ) -> Result<Self> {
-        let stop_flag = Arc::new(AtomicBool::new(false));
-        let runner_flag = Arc::clone(&stop_flag);
-        let runner_tx = tx.clone();
-        let shortcut_name = shortcut.clone();
-
-        let handle = thread::spawn(move || match GlobalShortcuts::new(&shortcut, kind) {
-            Ok(shortcuts) => {
-                if let Err(e) = shortcuts.run(runner_tx, runner_flag) {
-                    error!("Global shortcuts error: {}", e);
-                }
-            }
-            Err(e) => {
-                error!("Failed to initialize global shortcuts: {}", e);
-            }
-        });
-
-        Ok(Self {
-            stop_flag,
-            handle: Some(handle),
-            shortcut: shortcut_name,
-            kind,
-        })
-    }
-
-    fn restart(
-        &mut self,
-        shortcut: String,
-        kind: ShortcutKind,
-        tx: mpsc::Sender<ShortcutEvent>,
-    ) -> Result<()> {
-        self.stop();
-        *self = Self::spawn(shortcut, kind, tx)?;
-        Ok(())
-    }
-
-    fn stop(&mut self) {
-        self.stop_flag.store(true, Ordering::Relaxed);
-        if let Some(handle) = self.handle.take() {
-            if let Err(err) = handle.join() {
-                error!("Shortcut listener thread panicked: {:?}", err);
-            }
-        }
-    }
-
-    fn matches(&self, shortcut: &str, kind: ShortcutKind) -> bool {
-        self.shortcut == shortcut && self.kind == kind
-    }
-}
-
-impl Drop for ShortcutListener {
-    fn drop(&mut self) {
-        self.stop();
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,8 +109,7 @@ pub struct HyprwhsprApp {
     shortcut_rx: Option<mpsc::Receiver<ShortcutEvent>>,
     control_tx: mpsc::Sender<ControlRequest>,
     control_rx: Option<mpsc::Receiver<ControlRequest>>,
-    press_listener: Option<ShortcutListener>,
-    hold_listener: Option<ShortcutListener>,
+    input_manager: Option<InputManagerHandle>,
     current_config: Config,
     recording_session: Option<RecordingSession>,
     recording_trigger: Option<RecordingTrigger>,
@@ -269,8 +196,7 @@ impl HyprwhsprApp {
             shortcut_rx: Some(shortcut_rx),
             control_tx,
             control_rx: Some(control_rx),
-            press_listener: None,
-            hold_listener: None,
+            input_manager: None,
             current_config: config,
             recording_session: None,
             recording_trigger: None,
@@ -291,7 +217,7 @@ impl HyprwhsprApp {
             .take()
             .expect("control receiver already consumed");
         let _control_server = ControlServer::spawn(self.control_tx.clone())?;
-        self.ensure_shortcut_listeners(self.current_config.shortcuts.clone())?;
+        self.ensure_input_manager(self.current_config.shortcuts.clone())?;
         self.log_shortcut_configuration(&self.current_config.shortcuts);
 
         let mut config_rx = self.config_manager.subscribe();
@@ -340,39 +266,22 @@ impl HyprwhsprApp {
         Ok(())
     }
 
-    fn ensure_shortcut_listeners(&mut self, shortcuts: ShortcutsConfig) -> Result<()> {
-        self.ensure_listener(ShortcutKind::Press, shortcuts.press.clone())?;
-        self.ensure_listener(ShortcutKind::Hold, shortcuts.hold.clone())
+    fn ensure_input_manager(&mut self, shortcuts: ShortcutsConfig) -> Result<()> {
+        if let Some(manager) = &self.input_manager {
+            manager.update_shortcuts(shortcuts)?;
+        } else {
+            self.input_manager = Some(InputManagerHandle::spawn(
+                shortcuts,
+                self.shortcut_tx.clone(),
+            )?);
+        }
+        Ok(())
     }
 
-    fn ensure_listener(&mut self, kind: ShortcutKind, shortcut: Option<String>) -> Result<()> {
-        let slot = match kind {
-            ShortcutKind::Press => &mut self.press_listener,
-            ShortcutKind::Hold => &mut self.hold_listener,
-        };
-
-        match shortcut {
-            Some(ref target) => {
-                if let Some(listener) = slot {
-                    if listener.matches(target, kind) {
-                        return Ok(());
-                    }
-                    listener.restart(target.clone(), kind, self.shortcut_tx.clone())?;
-                } else {
-                    let listener =
-                        ShortcutListener::spawn(target.clone(), kind, self.shortcut_tx.clone())?;
-                    *slot = Some(listener);
-                }
-            }
-            None => {
-                if let Some(listener) = slot.as_mut() {
-                    listener.stop();
-                }
-                *slot = None;
-            }
+    fn set_input_app_busy(&self, app_busy: bool) {
+        if let Some(manager) = &self.input_manager {
+            manager.set_app_busy(app_busy);
         }
-
-        Ok(())
     }
 
     fn apply_config_update(&mut self, new_config: Config) -> Result<()> {
@@ -429,12 +338,11 @@ impl HyprwhsprApp {
             self.transcriber = backend;
         }
 
-        let shortcuts_changed = new_config.shortcuts != self.current_config.shortcuts
-            || self.press_listener.is_none()
-            || (new_config.hold_shortcut().is_some() && self.hold_listener.is_none());
+        let shortcuts_changed =
+            new_config.shortcuts != self.current_config.shortcuts || self.input_manager.is_none();
 
         if shortcuts_changed {
-            self.ensure_shortcut_listeners(new_config.shortcuts.clone())?;
+            self.ensure_input_manager(new_config.shortcuts.clone())?;
             self.log_shortcut_configuration(&new_config.shortcuts);
         }
 
@@ -622,6 +530,7 @@ impl HyprwhsprApp {
 
         self.recording_session = Some(session);
         self.recording_trigger = Some(trigger);
+        self.set_input_app_busy(true);
 
         let recording_started_at = Instant::now();
         self.benchmark = Some(BenchmarkRecorder::new(
@@ -671,6 +580,7 @@ impl HyprwhsprApp {
             }
             self.benchmark = None;
             self.is_processing = false;
+            self.set_input_app_busy(false);
             // Return to inactive state after processing
             self.status_writer
                 .set_state(WaybarState::Inactive, "Ready")
@@ -678,6 +588,7 @@ impl HyprwhsprApp {
         } else {
             warn!("No audio data captured");
             self.benchmark = None;
+            self.set_input_app_busy(false);
             self.status_writer
                 .set_state(WaybarState::Inactive, "Ready")
                 .unwrap_or_else(|e| tracing::warn!("Failed to set inactive status: {}", e));
@@ -879,15 +790,10 @@ impl HyprwhsprApp {
         }
         self.status_writer.cleanup()?;
 
-        if let Some(listener) = &mut self.press_listener {
-            listener.stop();
+        if let Some(manager) = &mut self.input_manager {
+            manager.stop();
         }
-        self.press_listener = None;
-
-        if let Some(listener) = &mut self.hold_listener {
-            listener.stop();
-        }
-        self.hold_listener = None;
+        self.input_manager = None;
         self.recording_trigger = None;
 
         info!("✅ Cleanup completed");
