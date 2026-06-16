@@ -129,7 +129,11 @@ impl GlobalShortcuts {
                     _ => {
                         self.handle_input_device_event(event);
                         pressed_keys.clear();
-                        combination_active = false;
+                        release_hold_shortcut_on_input_change(
+                            &tx,
+                            self.kind,
+                            &mut combination_active,
+                        );
                     }
                 }
             }
@@ -260,16 +264,25 @@ impl GlobalShortcuts {
                     info!("Removed {} keyboard device(s)", removed);
                 }
                 pressed_keys.clear();
-                combination_active = false;
+                release_hold_shortcut_on_input_change(&tx, self.kind, &mut combination_active);
             }
 
             if fallback_rescan_enabled && last_fallback_rescan.elapsed() >= fallback_rescan_interval
             {
                 last_fallback_rescan = Instant::now();
-                pressed_keys.clear();
-                combination_active = false;
-                if let Err(err) = self.refresh_devices() {
-                    error!("Failed to refresh keyboard devices: {}", err);
+                match self.refresh_devices() {
+                    Ok(true) => {
+                        pressed_keys.clear();
+                        release_hold_shortcut_on_input_change(
+                            &tx,
+                            self.kind,
+                            &mut combination_active,
+                        );
+                    }
+                    Ok(false) => {}
+                    Err(err) => {
+                        error!("Failed to refresh keyboard devices: {}", err);
+                    }
                 }
             }
 
@@ -420,10 +433,18 @@ impl GlobalShortcuts {
         Ok(keyboards)
     }
 
-    fn refresh_devices(&mut self) -> Result<()> {
+    fn refresh_devices(&mut self) -> Result<bool> {
+        let previous_paths: HashSet<PathBuf> = self
+            .devices
+            .iter()
+            .map(|device| device.path.clone())
+            .collect();
         let devices = Self::find_keyboard_devices(false)?;
         let previous = self.devices.len();
         let updated = devices.len();
+        let updated_paths: HashSet<PathBuf> =
+            devices.iter().map(|device| device.path.clone()).collect();
+        let changed = previous_paths != updated_paths;
 
         if updated == 0 && previous != 0 {
             warn!("No keyboard devices found!");
@@ -441,7 +462,7 @@ impl GlobalShortcuts {
 
         self.devices = devices;
 
-        Ok(())
+        Ok(changed)
     }
 
     fn is_keyboard_device(device: &Device) -> bool {
@@ -556,6 +577,29 @@ impl GlobalShortcuts {
     }
 }
 
+fn release_hold_shortcut_on_input_change(
+    tx: &mpsc::Sender<ShortcutEvent>,
+    kind: ShortcutKind,
+    combination_active: &mut bool,
+) {
+    *combination_active = false;
+
+    if !matches!(kind, ShortcutKind::Hold) {
+        return;
+    }
+
+    if let Err(err) = tx.try_send(ShortcutEvent {
+        triggered_at: Instant::now(),
+        kind,
+        phase: ShortcutPhase::End,
+    }) {
+        warn!(
+            "Failed to send hold shortcut release event after input device change: {}",
+            err
+        );
+    }
+}
+
 fn is_device_disconnect_error(err: &io::Error) -> bool {
     match err.raw_os_error() {
         Some(code) if code == libc::ENODEV || code == libc::EBADF || code == libc::ENXIO => true,
@@ -623,5 +667,42 @@ mod tests {
         assert!(is_input_event_node(Path::new("/dev/input/event10")));
         assert!(!is_input_event_node(Path::new("/dev/input/mouse0")));
         assert!(!is_input_event_node(Path::new("/tmp/event0")));
+    }
+
+    #[test]
+    fn active_hold_disconnect_emits_release() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let mut combination_active = true;
+
+        release_hold_shortcut_on_input_change(&tx, ShortcutKind::Hold, &mut combination_active);
+
+        let event = rx.try_recv().expect("hold release event");
+        assert!(!combination_active);
+        assert_eq!(event.kind, ShortcutKind::Hold);
+        assert_eq!(event.phase, ShortcutPhase::End);
+    }
+
+    #[test]
+    fn inactive_hold_disconnect_still_emits_release() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let mut combination_active = false;
+
+        release_hold_shortcut_on_input_change(&tx, ShortcutKind::Hold, &mut combination_active);
+
+        let event = rx.try_recv().expect("hold release event");
+        assert!(!combination_active);
+        assert_eq!(event.kind, ShortcutKind::Hold);
+        assert_eq!(event.phase, ShortcutPhase::End);
+    }
+
+    #[test]
+    fn active_press_disconnect_does_not_emit_release() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let mut combination_active = true;
+
+        release_hold_shortcut_on_input_change(&tx, ShortcutKind::Press, &mut combination_active);
+
+        assert!(!combination_active);
+        assert!(rx.try_recv().is_err());
     }
 }

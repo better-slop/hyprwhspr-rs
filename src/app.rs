@@ -279,7 +279,7 @@ impl HyprwhsprApp {
         })
     }
 
-    pub async fn run(mut self) -> Result<()> {
+    pub async fn run(&mut self) -> Result<()> {
         info!("🚀 hyprwhspr running!");
 
         let mut shortcut_rx = self

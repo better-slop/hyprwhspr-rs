@@ -79,7 +79,7 @@ async fn main() -> Result<()> {
     info!("   Audio feedback: {}", config.audio_feedback);
 
     // Initialize application
-    let app = HyprwhsprApp::new(config_manager)?;
+    let mut app = HyprwhsprApp::new(config_manager)?;
 
     // Set up signal handling
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
@@ -127,6 +127,7 @@ async fn main() -> Result<()> {
 
     // Cleanup
     info!("🛑 Shutting down hyprwhspr-rs...");
+    app.cleanup().await?;
     info!("✅ Shutdown complete");
 
     Ok(())
