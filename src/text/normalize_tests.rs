@@ -36,6 +36,8 @@ fn itn_normalizes_commanded_punctuation() {
 fn app_rules_preserve_code_dictation_symbols() {
     let normalizer = service(&[]);
 
+    assert_eq!(normalizer.normalize("hello new line world"), "Hello\nWorld");
+    assert_eq!(normalizer.normalize("tab item"), "\tItem");
     assert_eq!(
         normalizer.normalize("prepare dash dash go"),
         "Prepare -- go"

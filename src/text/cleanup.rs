@@ -8,6 +8,8 @@ static CONTROL_PUNCT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 });
 static CONTROL_TRAILING_SPACE_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[ \t]+([\n\t])").expect("valid trailing space cleanup regex"));
+static CONTROL_LEADING_SPACE_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"([\n\t])[ \t]+").expect("valid leading space cleanup regex"));
 static SYMBOL_PUNCT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"([()\[\]\{\}"'])\s*[.,;]+"#).expect("valid symbol artifact cleanup regex")
 });
@@ -76,7 +78,9 @@ pub(super) fn clean_control_artifacts(input: &str) -> String {
     let without_control_punct = CONTROL_PUNCT_REGEX.replace_all(input, "$1");
     let without_trailing_space =
         CONTROL_TRAILING_SPACE_REGEX.replace_all(&without_control_punct, "$1");
-    let without_symbol_punct = SYMBOL_PUNCT_REGEX.replace_all(&without_trailing_space, "$1");
+    let without_leading_space =
+        CONTROL_LEADING_SPACE_REGEX.replace_all(&without_trailing_space, "$1");
+    let without_symbol_punct = SYMBOL_PUNCT_REGEX.replace_all(&without_leading_space, "$1");
     let collapsed_open = OPEN_PAREN_SPACE_REGEX.replace_all(&without_symbol_punct, "(");
     let collapsed_close = CLOSE_PAREN_SPACE_REGEX.replace_all(&collapsed_open, ")");
     let no_open_comma = OPEN_PAREN_COMMA_REGEX.replace_all(&collapsed_close, "(");

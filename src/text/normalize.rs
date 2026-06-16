@@ -17,9 +17,6 @@ struct NormalizeRule {
 }
 
 const APP_NORMALIZATION_RULES: &[(&str, &str)] = &[
-    ("new line", "\n"),
-    ("newline", "\n"),
-    ("tab", "\t"),
     ("dash dash", "--"),
     ("dash", "-"),
     ("hyphen", "-"),
@@ -68,6 +65,9 @@ const APP_NORMALIZATION_RULES: &[(&str, &str)] = &[
     ("single quote", "'"),
 ];
 
+const CONTROL_COMMAND_RULES: &[(&str, &str)] =
+    &[("new line", "\n"), ("newline", "\n"), ("tab", "\t")];
+
 #[derive(Debug, Clone)]
 pub struct NormalizeTextService {
     overrides: Vec<NormalizeRule>,
@@ -112,6 +112,21 @@ impl NormalizeTextService {
             ));
         }
         current = after_itn;
+
+        let (after_control_commands, control_count) = apply_control_commands(&current);
+        if let Some(ref mut logged_steps) = steps {
+            logged_steps.push(PipelineStepRecord::new(
+                "control_commands",
+                current.clone(),
+                after_control_commands.clone(),
+                if control_count > 0 {
+                    Some(control_count)
+                } else {
+                    None
+                },
+            ));
+        }
+        current = after_control_commands;
 
         self.record_step(
             &mut steps,
@@ -203,7 +218,7 @@ impl NormalizeTextService {
         }
         current = after_overrides;
 
-        let trimmed = current.trim().to_string();
+        let trimmed = current.trim_matches(' ').to_string();
         if let Some(ref mut logged_steps) = steps {
             logged_steps.push(PipelineStepRecord::new(
                 "trim_whitespace",
@@ -317,6 +332,26 @@ fn replace_case_sensitive_word(buffer: &mut String, from: &str, to: &str) -> usi
         return 0;
     };
     replace_with_regex(buffer, &regex, to)
+}
+
+fn apply_control_commands(text: &str) -> (String, usize) {
+    let mut result = text.to_string();
+    let mut count = 0;
+
+    let mut rules = CONTROL_COMMAND_RULES.to_vec();
+    rules.sort_by(|a, b| {
+        b.0.split_whitespace()
+            .count()
+            .cmp(&a.0.split_whitespace().count())
+            .then_with(|| b.0.len().cmp(&a.0.len()))
+            .then_with(|| a.0.cmp(b.0))
+    });
+
+    for (spoken, written) in rules {
+        count += replace_case_insensitive_word(&mut result, spoken, written);
+    }
+
+    (result, count)
 }
 
 fn replace_with_regex(buffer: &mut String, regex: &Regex, replacement: &str) -> usize {
