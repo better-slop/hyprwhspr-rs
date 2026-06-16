@@ -1,4 +1,4 @@
-use super::{FastVadMode, SAMPLE_RATE_HZ};
+use crate::live_harness::{FastVadMode, SAMPLE_RATE_HZ};
 use crate::resource_timeline::TipPhaseSample;
 use crate::resource_usage::ResourceDelta;
 use comfy_table::modifiers::UTF8_ROUND_CORNERS;

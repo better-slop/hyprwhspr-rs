@@ -18,7 +18,8 @@ Ignored, expensive, prod-ish tests for transcription + normalization correctness
 
 - Always-on: `TipResourceTimeline` wraps fixture load, config load, fast VAD, backend init, backend transcription, and normalization.
 - Backend internals: Groq and whisper.cpp emit backend phase metrics for encode/request/temp-WAV/CLI; request upload/response splits still come from `BackendMetrics` timing fields.
-- Deep allocation stacks: use `tests/tip/profile.sh` with `heaptrack`; it targets a report-only test so the process exits cleanly and heaptrack can show frees.
+- Test allocation stacks: use `tests/tip/profile.sh` with `heaptrack`; it targets a report-only test so the process exits cleanly and heaptrack can show frees.
+- App allocation stacks: use `tests/tip/profile-app.sh` or `target/debug/tip-profile`; this avoids libtest frames and is the better leak-attribution target.
 
 ## Run
 
@@ -52,6 +53,20 @@ Allocation-stack profile:
 
 ```bash
 HYPRWHSPR_TIP_PROVIDERS=whisper_cpp HYPRWHSPR_TIP_FAST_VAD=enabled tests/tip/profile.sh
+```
+
+Standalone app profile:
+
+```bash
+tests/tip/profile-app.sh whisper_cpp enabled
+```
+
+Manual standalone app profile:
+
+```bash
+cargo build --bin tip-profile
+heaptrack --record-only target/debug/tip-profile --provider whisper_cpp --fast-vad enabled
+heaptrack_print --print-leaks --print-peaks heaptrack.*.zst
 ```
 
 Profile a specific clean-exit test:
