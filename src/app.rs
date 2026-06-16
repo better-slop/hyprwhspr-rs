@@ -12,6 +12,7 @@ use crate::config::{Config, ConfigManager, ShortcutsConfig, TranscriptionProvide
 use crate::control::{ControlRequest, ControlServer, RecordCommand, RecorderState};
 use crate::input::{InputManagerHandle, ShortcutEvent, ShortcutKind, ShortcutPhase, TextInjector};
 use crate::status::{StatusWriter, WaybarState};
+use crate::text::NormalizeTextService;
 use crate::transcription::{TranscriptionBackend, TranscriptionResult};
 use crate::whisper::WhisperVadOptions;
 
@@ -104,6 +105,7 @@ pub struct HyprwhsprApp {
     transcriber: TranscriptionBackend,
     fast_vad: Option<FastVad>,
     text_injector: Arc<Mutex<TextInjector>>,
+    text_normalizer: NormalizeTextService,
     status_writer: StatusWriter,
     shortcut_tx: mpsc::Sender<ShortcutEvent>,
     shortcut_rx: Option<mpsc::Receiver<ShortcutEvent>>,
@@ -153,9 +155,9 @@ impl HyprwhsprApp {
             config.global_paste_shortcut,
             config.paste_hints.shift.clone(),
             config.paste_hints.shift_insert.clone(),
-            config.word_overrides.clone(),
             config.auto_copy_clipboard,
         )?;
+        let text_normalizer = NormalizeTextService::new(config.word_overrides.clone());
 
         let status_writer = StatusWriter::new()?;
         status_writer.set_state(WaybarState::Inactive, "Ready")?;
@@ -191,6 +193,7 @@ impl HyprwhsprApp {
             transcriber,
             fast_vad,
             text_injector: Arc::new(Mutex::new(text_injector)),
+            text_normalizer,
             status_writer,
             shortcut_tx,
             shortcut_rx: Some(shortcut_rx),
@@ -311,9 +314,9 @@ impl HyprwhsprApp {
             new_config.global_paste_shortcut,
             new_config.paste_hints.shift.clone(),
             new_config.paste_hints.shift_insert.clone(),
-            new_config.word_overrides.clone(),
             new_config.auto_copy_clipboard,
         )?;
+        let text_normalizer = NormalizeTextService::new(new_config.word_overrides.clone());
 
         let transcriber_changed =
             TranscriptionBackend::needs_refresh(&self.current_config, &new_config);
@@ -380,6 +383,7 @@ impl HyprwhsprApp {
         }
 
         self.text_injector = Arc::new(Mutex::new(text_injector));
+        self.text_normalizer = text_normalizer;
         self.audio_feedback = audio_feedback;
         self.current_config = new_config;
 
@@ -751,9 +755,23 @@ impl HyprwhsprApp {
         }
 
         info!("📝 Transcription: \"{}\"", text);
+        let normalized_text = self.text_normalizer.normalize(&text);
+
+        if normalized_text.is_empty() {
+            warn!("Transcription became empty after text normalization");
+            if let Some(mut benchmark) = self.benchmark.take() {
+                benchmark.mark_injection_skipped(Instant::now());
+                if let Some(summary) = benchmark.finalize() {
+                    info!(message = %format_args!("\n{}", summary));
+                }
+            }
+            return Ok(());
+        }
+
+        debug!("📝 Normalized transcription: \"{}\"", normalized_text);
 
         // Save to history for Walker/Elephant integration
-        if let Err(e) = self.status_writer.save_transcription(&text) {
+        if let Err(e) = self.status_writer.save_transcription(&normalized_text) {
             tracing::warn!("Failed to save transcription to history: {}", e);
         }
 
@@ -766,7 +784,7 @@ impl HyprwhsprApp {
         }
 
         debug!("⌨️  Injecting text into active application...");
-        injector.inject_text(&text).await?;
+        injector.inject_text(&normalized_text).await?;
 
         let injection_end = Instant::now();
         if let Some(benchmark) = self.benchmark.as_mut() {
