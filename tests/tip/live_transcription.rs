@@ -4,7 +4,6 @@ use hyprwhspr_rs::config::{Config, ConfigManager, TranscriptionProvider};
 use hyprwhspr_rs::text::NormalizeTextService;
 use hyprwhspr_rs::transcription::TranscriptionBackend;
 use hyprwhspr_rs::whisper::WhisperVadOptions;
-use similar::{ChangeTag, TextDiff};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
@@ -12,9 +11,11 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 mod bench_report;
+mod diff_report;
 mod resource_usage;
 
 use bench_report::{print_case_report, TipBenchmarkInput};
+use diff_report::assert_text_eq;
 use resource_usage::ResourceSnapshot;
 
 const SAMPLE_RATE_HZ: u32 = 16_000;
@@ -357,166 +358,6 @@ fn load_pcm_s16le_mono_wav(path: &Path) -> Result<FixtureAudio> {
         samples,
         sample_rate_hz: fmt.sample_rate_hz,
     })
-}
-
-fn assert_text_eq(label: &str, expected: &str, actual: &str) {
-    if expected == actual {
-        return;
-    }
-
-    panic!(
-        "{label} mismatch\n\n{}\n\n{}",
-        render_wrapped_text_pipeline_diff(expected, actual),
-        render_similar_diff(expected, actual)
-    );
-}
-
-fn render_wrapped_text_pipeline_diff(expected: &str, actual: &str) -> String {
-    let mut lines = Vec::new();
-    lines.push("┌─ Text Pipeline (steps: 1, changed: 1)".to_string());
-    push_wrapped_body(&mut lines, "IN  : ", expected);
-    push_wrapped_body(&mut lines, "• expected_vs_actual (applied)", "");
-    push_wrapped_body(&mut lines, "  - ", expected);
-    push_wrapped_body(&mut lines, "  + ", actual);
-    push_wrapped_body(&mut lines, "OUT : ", actual);
-    lines.push("└─".to_string());
-    lines.join("\n")
-}
-
-fn render_similar_diff(expected: &str, actual: &str) -> String {
-    let mut lines = Vec::new();
-    let diff = TextDiff::from_lines(expected, actual);
-
-    lines.push("--- expected".to_string());
-    lines.push("+++ actual".to_string());
-    lines.push("legend: [-expected word-] {+actual word+}".to_string());
-
-    for (group_idx, group) in diff.grouped_ops(3).iter().enumerate() {
-        if group_idx > 0 {
-            lines.push(String::new());
-        }
-        lines.push(format!("@@ group {} @@", group_idx + 1));
-
-        for op in group {
-            for change in diff.iter_inline_changes(op) {
-                let sign = match change.tag() {
-                    ChangeTag::Delete => "-",
-                    ChangeTag::Insert => "+",
-                    ChangeTag::Equal => " ",
-                };
-                lines.push(format!(
-                    "{} {} │{}│ {}{}",
-                    line_no(change.old_index()),
-                    line_no(change.new_index()),
-                    sign,
-                    render_inline_change(&change),
-                    if change.missing_newline() { "␄" } else { "" }
-                ));
-            }
-        }
-    }
-
-    lines.join("\n")
-}
-
-fn line_no(index: Option<usize>) -> String {
-    index
-        .map(|idx| format!("{:>4}", idx + 1))
-        .unwrap_or_else(|| "    ".to_string())
-}
-
-fn render_inline_change<T>(change: &similar::InlineChange<'_, T>) -> String
-where
-    T: similar::DiffableStr + ?Sized,
-{
-    let mut out = String::new();
-
-    for (emphasized, value) in change.iter_strings_lossy() {
-        let escaped = escape_visible(&value);
-        if emphasized {
-            match change.tag() {
-                ChangeTag::Delete => {
-                    out.push_str("[-");
-                    out.push_str(&escaped);
-                    out.push_str("-]");
-                }
-                ChangeTag::Insert => {
-                    out.push_str("{+");
-                    out.push_str(&escaped);
-                    out.push_str("+}");
-                }
-                ChangeTag::Equal => out.push_str(&escaped),
-            }
-        } else {
-            out.push_str(&escaped);
-        }
-    }
-
-    out.trim_end_matches('⏎').to_string()
-}
-
-fn push_wrapped_body(lines: &mut Vec<String>, label: &str, value: &str) {
-    const WRAP_CHARS: usize = 118;
-    let escaped = escape_visible(value);
-    let content = format!("{label}{escaped}");
-
-    for segment in wrap_chars(&content, WRAP_CHARS) {
-        lines.push(format!("│ {segment}"));
-    }
-}
-
-fn wrap_chars(value: &str, limit: usize) -> Vec<String> {
-    if value.is_empty() {
-        return vec![String::new()];
-    }
-
-    let mut lines = Vec::new();
-    let mut remaining = value.trim_end();
-
-    while remaining.chars().count() > limit {
-        let split_at = split_boundary(remaining, limit);
-        let (line, rest) = remaining.split_at(split_at);
-        lines.push(line.trim_end().to_string());
-        remaining = rest.trim_start();
-    }
-
-    if !remaining.is_empty() {
-        lines.push(remaining.to_string());
-    }
-
-    lines
-}
-
-fn split_boundary(value: &str, limit: usize) -> usize {
-    let hard_limit = value
-        .char_indices()
-        .nth(limit)
-        .map(|(idx, _)| idx)
-        .unwrap_or(value.len());
-    let candidate = &value[..hard_limit];
-
-    candidate
-        .char_indices()
-        .rev()
-        .find(|(_, ch)| ch.is_whitespace())
-        .map(|(idx, _)| idx)
-        .filter(|idx| *idx > 0)
-        .unwrap_or(hard_limit)
-}
-
-fn escape_visible(value: &str) -> String {
-    let mut rendered = String::with_capacity(value.len());
-
-    for ch in value.chars() {
-        match ch {
-            '\n' => rendered.push('⏎'),
-            '\t' => rendered.push('⇥'),
-            '\r' => rendered.push('␍'),
-            _ => rendered.push(ch),
-        }
-    }
-
-    rendered
 }
 
 fn groq_provider() -> TranscriptionProvider {
