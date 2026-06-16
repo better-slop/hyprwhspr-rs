@@ -30,6 +30,11 @@ static CLOSE_BRACE_COMMA_REGEX: LazyLock<Regex> =
 static SPACE_BEFORE_PUNCT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"[ \t]+([,.;:!?])").expect("valid punctuation spacing cleanup regex")
 });
+static DOUBLE_QUOTE_PAIR_SPACE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#""\s+([^"\n]*?)\s+""#).expect("valid double quote cleanup regex")
+});
+static SINGLE_QUOTE_PAIR_SPACE_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"'\s+([^'\n]*?)\s+'").expect("valid single quote cleanup regex"));
 static DUPLICATE_COMMA_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r",(?:\s*,)+").expect("valid duplicate comma cleanup regex"));
 static SPACE_BEFORE_NEWLINE_REGEX: LazyLock<Regex> =
@@ -81,8 +86,12 @@ pub(super) fn clean_control_artifacts(input: &str) -> String {
     let no_open_brace_comma = OPEN_BRACE_COMMA_REGEX.replace_all(&no_close_bracket_comma, "{ ");
     let no_close_brace_comma = CLOSE_BRACE_COMMA_REGEX.replace_all(&no_open_brace_comma, " }");
     let no_space_before_punct = SPACE_BEFORE_PUNCT_REGEX.replace_all(&no_close_brace_comma, "$1");
+    let collapsed_double_quotes =
+        DOUBLE_QUOTE_PAIR_SPACE_REGEX.replace_all(&no_space_before_punct, "\"$1\"");
+    let collapsed_single_quotes =
+        SINGLE_QUOTE_PAIR_SPACE_REGEX.replace_all(&collapsed_double_quotes, "'$1'");
     DUPLICATE_COMMA_REGEX
-        .replace_all(&no_space_before_punct, ",")
+        .replace_all(&collapsed_single_quotes, ",")
         .to_string()
 }
 

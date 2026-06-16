@@ -45,6 +45,14 @@ fn app_rules_preserve_code_dictation_symbols() {
         "{ foo }"
     );
     assert_eq!(normalizer.normalize("foo under score bar"), "Foo_bar");
+    assert_eq!(
+        normalizer.normalize("open quote hello close quote"),
+        "\"hello\""
+    );
+    assert_eq!(
+        normalizer.normalize("open single quote hello close single quote"),
+        "'hello'"
+    );
 }
 
 #[test]

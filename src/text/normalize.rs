@@ -56,8 +56,12 @@ const APP_NORMALIZATION_RULES: &[(&str, &str)] = &[
     ("pipe", "|"),
     ("tilde", "~"),
     ("grave", "`"),
+    ("open quote", "\""),
+    ("close quote", "\""),
     ("quote", "\""),
     ("double quote", "\""),
+    ("open single quote", "'"),
+    ("close single quote", "'"),
     ("apostrophe", "'"),
     ("single quote", "'"),
 ];
