@@ -4,6 +4,7 @@ use hyprwhspr_rs::config::{Config, ConfigManager, TranscriptionProvider};
 use hyprwhspr_rs::text::NormalizeTextService;
 use hyprwhspr_rs::transcription::TranscriptionBackend;
 use hyprwhspr_rs::whisper::WhisperVadOptions;
+use similar::{ChangeTag, TextDiff};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
@@ -364,8 +365,9 @@ fn assert_text_eq(label: &str, expected: &str, actual: &str) {
     }
 
     panic!(
-        "{label} mismatch\n\n{}",
-        render_wrapped_text_pipeline_diff(expected, actual)
+        "{label} mismatch\n\n{}\n\n{}",
+        render_wrapped_text_pipeline_diff(expected, actual),
+        render_wrapped_word_diff(expected, actual)
     );
 }
 
@@ -379,6 +381,38 @@ fn render_wrapped_text_pipeline_diff(expected: &str, actual: &str) -> String {
     push_wrapped_body(&mut lines, "OUT : ", actual);
     lines.push("└─".to_string());
     lines.join("\n")
+}
+
+fn render_wrapped_word_diff(expected: &str, actual: &str) -> String {
+    let mut lines = Vec::new();
+    lines.push("┌─ Word Diff (similar::TextDiff::from_words)".to_string());
+    push_wrapped_body(&mut lines, "LEGEND: ", "[-expected only-] {+actual only+}");
+    push_wrapped_body(&mut lines, "DIFF  : ", &word_diff(expected, actual));
+    lines.push("└─".to_string());
+    lines.join("\n")
+}
+
+fn word_diff(expected: &str, actual: &str) -> String {
+    let diff = TextDiff::from_words(expected, actual);
+    let mut rendered = String::new();
+
+    for change in diff.iter_all_changes() {
+        match change.tag() {
+            ChangeTag::Equal => rendered.push_str(change.value()),
+            ChangeTag::Delete => {
+                rendered.push_str("[-");
+                rendered.push_str(change.value());
+                rendered.push_str("-]");
+            }
+            ChangeTag::Insert => {
+                rendered.push_str("{+");
+                rendered.push_str(change.value());
+                rendered.push_str("+}");
+            }
+        }
+    }
+
+    rendered
 }
 
 fn push_wrapped_body(lines: &mut Vec<String>, label: &str, value: &str) {

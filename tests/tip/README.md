@@ -10,6 +10,7 @@ Ignored, expensive, prod-ish tests for transcription + normalization correctness
 - Overrides: always empty `word_overrides`
 - Providers: configured by the provider matrix in `live_transcription.rs`
 - Metrics: timing table, backend metrics, CPU from `getrusage`, RSS from `/proc/self/status`
+- Failures: wrapped text-pipeline block plus `similar::TextDiff::from_words` word diff
 
 `word_overrides` stay out of this suite on purpose. They are user-local aliases after the shared pipeline and can hide ITN/spacing bugs.
 
