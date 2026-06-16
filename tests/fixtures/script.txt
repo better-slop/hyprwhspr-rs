@@ -1,0 +1,52 @@
+Hello world. This is a basic dictation test.
+
+This sentence has a comma, a period, a question mark, and an exclamation point.
+
+Open parenthesis hello comma world close parenthesis.
+
+Open quote yes close quote.
+
+Open single quote yes yes yes close single quote.
+
+Open double quote this should be wrapped in double quotes close double quote.
+
+Single quote short phrase single quote.
+
+The price is twenty five dollars and ninety nine cents.
+
+The meeting is at three thirty PM on Friday.
+
+I have one hundred twenty three apples and four thousand five hundred oranges.
+
+My email is test at example dot com.
+
+Visit gee pee tee dot com and ask about H T T P APIs.
+
+New line.
+This should be on the next line.
+
+Tab item one.
+Tab item two.
+
+Start a list colon new line.
+Tab first item new line.
+Tab second item new line.
+Tab third item.
+
+Open parenthesis one comma two comma three close parenthesis.
+
+Open quote hello comma are you there question mark close quote.
+
+Open single quote do not panic close single quote.
+
+I use Rust comma Tokio comma ONNX runtime comma and Hyprland.
+
+This is a noisy cleanup test comma close quote.
+
+Open quote this phrase has spaces inside close quote.
+
+Open parenthesis open quote nested quote close quote close parenthesis.
+
+The shortcut should not get stuck after this recording ends.
+
+Final sentence. If this appears correctly, transcription, normalization, cleanup, and injection are working.
