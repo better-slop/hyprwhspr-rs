@@ -53,6 +53,22 @@ fn app_rules_preserve_code_dictation_symbols() {
         normalizer.normalize("open single quote hello close single quote"),
         "'hello'"
     );
+    assert_eq!(
+        normalizer.normalize("open quote, yes, close quote."),
+        "\"yes\""
+    );
+    assert_eq!(
+        normalizer.normalize("open double quote, yes, close double quote."),
+        "\"yes\""
+    );
+    assert_eq!(
+        normalizer.normalize("single quote, yes, single quote."),
+        "'yes'"
+    );
+    assert_eq!(
+        normalizer.normalize("open single quote, yes, yes, yes, close single quote."),
+        "'yes, yes, yes'"
+    );
 }
 
 #[test]

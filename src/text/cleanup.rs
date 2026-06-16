@@ -9,7 +9,7 @@ static CONTROL_PUNCT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 static CONTROL_TRAILING_SPACE_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[ \t]+([\n\t])").expect("valid trailing space cleanup regex"));
 static SYMBOL_PUNCT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"([()\[\]\{\}])\s*[.,;]+").expect("valid symbol artifact cleanup regex")
+    Regex::new(r#"([()\[\]\{\}"'])\s*[.,;]+"#).expect("valid symbol artifact cleanup regex")
 });
 static OPEN_PAREN_SPACE_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\( +").expect("valid open paren space cleanup regex"));
@@ -31,10 +31,11 @@ static SPACE_BEFORE_PUNCT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"[ \t]+([,.;:!?])").expect("valid punctuation spacing cleanup regex")
 });
 static DOUBLE_QUOTE_PAIR_SPACE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#""\s+([^"\n]*?)\s+""#).expect("valid double quote cleanup regex")
+    Regex::new(r#""\s*,?\s*([^"\n]*?)\s*,?\s*""#).expect("valid double quote cleanup regex")
 });
-static SINGLE_QUOTE_PAIR_SPACE_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"'\s+([^'\n]*?)\s+'").expect("valid single quote cleanup regex"));
+static SINGLE_QUOTE_PAIR_SPACE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"'\s*,?\s*([^'\n]*?)\s*,?\s*'").expect("valid single quote cleanup regex")
+});
 static DUPLICATE_COMMA_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r",(?:\s*,)+").expect("valid duplicate comma cleanup regex"));
 static SPACE_BEFORE_NEWLINE_REGEX: LazyLock<Regex> =
