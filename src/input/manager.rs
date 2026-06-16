@@ -245,9 +245,16 @@ impl InputManagerRuntime {
                     }
                 }
                 _ = evdev_tick.tick() => {
-                    let key_events = self.registry.poll_key_events(MAX_KEY_EVENTS_PER_TICK)?;
-                    if key_events > 0 {
-                        self.stats.key_events_seen += key_events as u64;
+                    let outcome = self.registry.poll_key_events(MAX_KEY_EVENTS_PER_TICK)?;
+                    if outcome.key_events > 0 {
+                        self.stats.key_events_seen += outcome.key_events as u64;
+                    }
+                    if outcome.devices_changed {
+                        if let Some(event) = self.shortcuts.on_device_set_changed() {
+                            self.emit_shortcut(event);
+                        }
+                    }
+                    if outcome.key_events > 0 || outcome.devices_changed {
                         let now = Instant::now();
                         for event in self.shortcuts.apply_key_state(self.registry.pressed_keys(), now) {
                             self.emit_shortcut(event);

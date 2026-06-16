@@ -11,6 +11,12 @@ pub(super) struct KeyboardRegistry {
     pressed_keys: HashSet<Key>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct PollOutcome {
+    pub key_events: usize,
+    pub devices_changed: bool,
+}
+
 struct KeyboardDevice {
     path: PathBuf,
     name: String,
@@ -47,8 +53,8 @@ impl KeyboardRegistry {
             .collect()
     }
 
-    pub(super) fn poll_key_events(&mut self, max_events: usize) -> Result<usize> {
-        let mut count = 0;
+    pub(super) fn poll_key_events(&mut self, max_events: usize) -> Result<PollOutcome> {
+        let mut outcome = PollOutcome::default();
         let mut removed_devices = HashSet::new();
 
         for entry in &mut self.devices {
@@ -59,18 +65,18 @@ impl KeyboardRegistry {
                             match event.value() {
                                 1 => {
                                     self.pressed_keys.insert(key);
-                                    count += 1;
+                                    outcome.key_events += 1;
                                 }
                                 0 => {
                                     self.pressed_keys.remove(&key);
-                                    count += 1;
+                                    outcome.key_events += 1;
                                 }
                                 _ => {}
                             }
                         }
 
-                        if count >= max_events {
-                            return Ok(count);
+                        if outcome.key_events >= max_events {
+                            return Ok(outcome);
                         }
                     }
                 }
@@ -89,9 +95,10 @@ impl KeyboardRegistry {
             self.devices
                 .retain(|device| !removed_devices.contains(&device.path));
             self.pressed_keys.clear();
+            outcome.devices_changed = true;
         }
 
-        Ok(count)
+        Ok(outcome)
     }
 
     pub(super) fn refresh(&mut self) -> Result<bool> {

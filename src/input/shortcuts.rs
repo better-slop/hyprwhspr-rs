@@ -342,4 +342,17 @@ mod tests {
         assert_eq!(releases[0].kind, ShortcutKind::Hold);
         assert_eq!(releases[0].phase, ShortcutPhase::End);
     }
+
+    #[test]
+    fn cleared_pressed_keys_releases_active_hold() {
+        let mut controller = ShortcutController::new(config(None, Some("SUPER+ALT"))).unwrap();
+        let keys = parse_shortcut("SUPER+ALT").unwrap();
+        controller.apply_key_state(&keys, Instant::now());
+
+        let end = controller.apply_key_state(&HashSet::new(), Instant::now());
+
+        assert_eq!(end.len(), 1);
+        assert_eq!(end[0].kind, ShortcutKind::Hold);
+        assert_eq!(end[0].phase, ShortcutPhase::End);
+    }
 }
