@@ -270,10 +270,19 @@ impl GlobalShortcuts {
             if fallback_rescan_enabled && last_fallback_rescan.elapsed() >= fallback_rescan_interval
             {
                 last_fallback_rescan = Instant::now();
-                pressed_keys.clear();
-                release_hold_shortcut_on_input_change(&tx, self.kind, &mut combination_active);
-                if let Err(err) = self.refresh_devices() {
-                    error!("Failed to refresh keyboard devices: {}", err);
+                match self.refresh_devices() {
+                    Ok(true) => {
+                        pressed_keys.clear();
+                        release_hold_shortcut_on_input_change(
+                            &tx,
+                            self.kind,
+                            &mut combination_active,
+                        );
+                    }
+                    Ok(false) => {}
+                    Err(err) => {
+                        error!("Failed to refresh keyboard devices: {}", err);
+                    }
                 }
             }
 
@@ -424,10 +433,18 @@ impl GlobalShortcuts {
         Ok(keyboards)
     }
 
-    fn refresh_devices(&mut self) -> Result<()> {
+    fn refresh_devices(&mut self) -> Result<bool> {
+        let previous_paths: HashSet<PathBuf> = self
+            .devices
+            .iter()
+            .map(|device| device.path.clone())
+            .collect();
         let devices = Self::find_keyboard_devices(false)?;
         let previous = self.devices.len();
         let updated = devices.len();
+        let updated_paths: HashSet<PathBuf> =
+            devices.iter().map(|device| device.path.clone()).collect();
+        let changed = previous_paths != updated_paths;
 
         if updated == 0 && previous != 0 {
             warn!("No keyboard devices found!");
@@ -445,7 +462,7 @@ impl GlobalShortcuts {
 
         self.devices = devices;
 
-        Ok(())
+        Ok(changed)
     }
 
     fn is_keyboard_device(device: &Device) -> bool {
