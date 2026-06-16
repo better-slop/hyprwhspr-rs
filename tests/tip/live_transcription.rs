@@ -367,7 +367,7 @@ fn assert_text_eq(label: &str, expected: &str, actual: &str) {
     panic!(
         "{label} mismatch\n\n{}\n\n{}",
         render_wrapped_text_pipeline_diff(expected, actual),
-        render_wrapped_word_diff(expected, actual)
+        render_similar_diff(expected, actual)
     );
 }
 
@@ -383,36 +383,76 @@ fn render_wrapped_text_pipeline_diff(expected: &str, actual: &str) -> String {
     lines.join("\n")
 }
 
-fn render_wrapped_word_diff(expected: &str, actual: &str) -> String {
+fn render_similar_diff(expected: &str, actual: &str) -> String {
     let mut lines = Vec::new();
-    lines.push("┌─ Word Diff (similar::TextDiff::from_words)".to_string());
-    push_wrapped_body(&mut lines, "LEGEND: ", "[-expected only-] {+actual only+}");
-    push_wrapped_body(&mut lines, "DIFF  : ", &word_diff(expected, actual));
-    lines.push("└─".to_string());
-    lines.join("\n")
-}
+    let diff = TextDiff::from_lines(expected, actual);
 
-fn word_diff(expected: &str, actual: &str) -> String {
-    let diff = TextDiff::from_words(expected, actual);
-    let mut rendered = String::new();
+    lines.push("--- expected".to_string());
+    lines.push("+++ actual".to_string());
+    lines.push("legend: [-expected word-] {+actual word+}".to_string());
 
-    for change in diff.iter_all_changes() {
-        match change.tag() {
-            ChangeTag::Equal => rendered.push_str(change.value()),
-            ChangeTag::Delete => {
-                rendered.push_str("[-");
-                rendered.push_str(change.value());
-                rendered.push_str("-]");
-            }
-            ChangeTag::Insert => {
-                rendered.push_str("{+");
-                rendered.push_str(change.value());
-                rendered.push_str("+}");
+    for (group_idx, group) in diff.grouped_ops(3).iter().enumerate() {
+        if group_idx > 0 {
+            lines.push(String::new());
+        }
+        lines.push(format!("@@ group {} @@", group_idx + 1));
+
+        for op in group {
+            for change in diff.iter_inline_changes(op) {
+                let sign = match change.tag() {
+                    ChangeTag::Delete => "-",
+                    ChangeTag::Insert => "+",
+                    ChangeTag::Equal => " ",
+                };
+                lines.push(format!(
+                    "{} {} │{}│ {}{}",
+                    line_no(change.old_index()),
+                    line_no(change.new_index()),
+                    sign,
+                    render_inline_change(&change),
+                    if change.missing_newline() { "␄" } else { "" }
+                ));
             }
         }
     }
 
-    rendered
+    lines.join("\n")
+}
+
+fn line_no(index: Option<usize>) -> String {
+    index
+        .map(|idx| format!("{:>4}", idx + 1))
+        .unwrap_or_else(|| "    ".to_string())
+}
+
+fn render_inline_change<T>(change: &similar::InlineChange<'_, T>) -> String
+where
+    T: similar::DiffableStr + ?Sized,
+{
+    let mut out = String::new();
+
+    for (emphasized, value) in change.iter_strings_lossy() {
+        let escaped = escape_visible(&value);
+        if emphasized {
+            match change.tag() {
+                ChangeTag::Delete => {
+                    out.push_str("[-");
+                    out.push_str(&escaped);
+                    out.push_str("-]");
+                }
+                ChangeTag::Insert => {
+                    out.push_str("{+");
+                    out.push_str(&escaped);
+                    out.push_str("+}");
+                }
+                ChangeTag::Equal => out.push_str(&escaped),
+            }
+        } else {
+            out.push_str(&escaped);
+        }
+    }
+
+    out.trim_end_matches('⏎').to_string()
 }
 
 fn push_wrapped_body(lines: &mut Vec<String>, label: &str, value: &str) {
