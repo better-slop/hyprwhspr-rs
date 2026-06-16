@@ -49,7 +49,7 @@ fn render_similar_report(expected: &str, actual: &str) -> String {
             .underline()
     ));
     out.push_str(&render_inline_diff(expected, actual));
-    out
+    hard_wrap_ansi_report(&out)
 }
 
 fn render_inline_diff(expected: &str, actual: &str) -> String {
@@ -226,4 +226,89 @@ fn escape_visible(value: &str) -> String {
     }
 
     rendered
+}
+
+fn hard_wrap_ansi_report(report: &str) -> String {
+    const WIDTH: usize = 118;
+    const CONTINUATION: &str = "      ";
+
+    report
+        .lines()
+        .flat_map(|line| hard_wrap_ansi_line(line, WIDTH, CONTINUATION))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn hard_wrap_ansi_line(line: &str, width: usize, continuation: &str) -> Vec<String> {
+    if visible_width(line) <= width {
+        return vec![line.to_string()];
+    }
+
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut visible = 0usize;
+    let mut byte_idx = 0usize;
+
+    while byte_idx < line.len() {
+        let rest = &line[byte_idx..];
+        if rest.starts_with('\x1b') {
+            let sequence_len = ansi_sequence_len(rest);
+            current.push_str(&rest[..sequence_len]);
+            byte_idx += sequence_len;
+            continue;
+        }
+
+        let ch = rest.chars().next().expect("non-empty string has next char");
+        current.push(ch);
+        byte_idx += ch.len_utf8();
+        visible += 1;
+
+        if visible >= width && byte_idx < line.len() {
+            out.push(current);
+            current = continuation.to_string();
+            visible = continuation.chars().count();
+        }
+    }
+
+    if !current.is_empty() {
+        out.push(current);
+    }
+
+    out
+}
+
+fn visible_width(line: &str) -> usize {
+    let mut width = 0usize;
+    let mut byte_idx = 0usize;
+
+    while byte_idx < line.len() {
+        let rest = &line[byte_idx..];
+        if rest.starts_with('\x1b') {
+            byte_idx += ansi_sequence_len(rest);
+            continue;
+        }
+
+        let ch = rest.chars().next().expect("non-empty string has next char");
+        byte_idx += ch.len_utf8();
+        width += 1;
+    }
+
+    width
+}
+
+fn ansi_sequence_len(value: &str) -> usize {
+    let bytes = value.as_bytes();
+    if bytes.first() != Some(&0x1b) {
+        return 0;
+    }
+
+    let start = if bytes.get(1) == Some(&b'[') { 2 } else { 1 };
+
+    for (idx, byte) in bytes.iter().enumerate().skip(start) {
+        if (0x40..=0x7e).contains(byte) {
+            return idx + 1;
+        }
+    }
+
+    value.len()
 }
