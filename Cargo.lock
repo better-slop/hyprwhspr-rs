@@ -996,6 +996,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05f29059c0c2090612e8d742178b0580d2dc940c837851ad723096f87af6663e"
 
 [[package]]
+name = "futures-macro"
+version = "0.3.31"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "162ee34ebcb7c64a8abebc059ce0fee27c2262618d7b60ed8faf72fef13c3650"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "futures-task"
 version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1008,6 +1019,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9fa08315bb612088cc391249efdc3bc77536f16c91f6cf495e6fbe85b20a4a81"
 dependencies = [
  "futures-core",
+ "futures-macro",
  "futures-task",
  "pin-project-lite",
  "pin-utils",
@@ -1242,6 +1254,7 @@ dependencies = [
  "earshot",
  "enigo",
  "evdev",
+ "futures-util",
  "jsonc-parser",
  "libc",
  "owo-colors",
@@ -1255,6 +1268,7 @@ dependencies = [
  "similar",
  "time",
  "tokio",
+ "tokio-udev",
  "tracing",
  "tracing-subscriber",
  "udev",
@@ -3356,6 +3370,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-udev"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d239a184f334141ead9fce462203705d199d053a63d00e25c8caf4e717149233"
+dependencies = [
+ "futures-core",
+ "tokio",
+ "udev",
+]
+
+[[package]]
 name = "toml_datetime"
 version = "0.7.5+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4678,3 +4703,11 @@ checksum = "29ce2c8a9384ad323cf564b67da86e21d3cfdff87908bc1223ed5c99bc792713"
 dependencies = [
  "zune-core",
 ]
+
+[[patch.unused]]
+name = "gtk4-layer-shell"
+version = "0.7.1"
+
+[[patch.unused]]
+name = "gtk4-layer-shell-sys"
+version = "0.5.2"
