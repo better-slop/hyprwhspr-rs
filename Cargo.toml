@@ -68,10 +68,16 @@ comfy-table = { version = "7.2", default-features = true, features = ["tty"] }
 [features]
 default = ["parakeet"]
 parakeet = ["parakeet-rs"]
+tip-profile = []
 
 [[test]]
 name = "tip_live_transcription"
 path = "tests/tip/live_transcription.rs"
+
+[[bin]]
+name = "tip-profile"
+path = "src/bin/tip-profile.rs"
+required-features = ["tip-profile"]
 
 [profile.release]
 opt-level = 3

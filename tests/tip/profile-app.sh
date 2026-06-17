@@ -4,7 +4,7 @@ set -euo pipefail
 provider="${HYPRWHSPR_TIP_PROVIDERS:-${1:-whisper_cpp}}"
 fast_vad="${HYPRWHSPR_TIP_FAST_VAD:-${2:-enabled}}"
 
-cargo build --bin tip-profile
+cargo build --bin tip-profile --features tip-profile
 
 if ! command -v heaptrack >/dev/null 2>&1; then
   echo "heaptrack is required for allocation-stack profiling" >&2

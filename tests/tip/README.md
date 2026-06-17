@@ -64,7 +64,7 @@ tests/tip/profile-app.sh whisper_cpp enabled
 Manual standalone app profile:
 
 ```bash
-cargo build --bin tip-profile
+cargo build --bin tip-profile --features tip-profile
 heaptrack --record-only target/debug/tip-profile --provider whisper_cpp --fast-vad enabled
 heaptrack_print --print-leaks --print-peaks heaptrack.*.zst
 ```
