@@ -99,6 +99,7 @@ mod tests {
         assert!(
             manager
                 .dispatch_source_events(vec![InputSourceEvent::KeyStateChanged { key_events: 2 }])
+                .await
         );
         let start = event_rx.recv().await.unwrap();
         assert_eq!(start.kind, ShortcutKind::Hold);
@@ -108,6 +109,7 @@ mod tests {
         assert!(
             manager
                 .dispatch_source_events(vec![InputSourceEvent::KeyStateChanged { key_events: 1 }])
+                .await
         );
         let end = event_rx.recv().await.unwrap();
         assert_eq!(end.kind, ShortcutKind::Hold);
@@ -121,27 +123,35 @@ mod tests {
         source.press("SUPER+ALT");
         let mut manager = test_manager(source, event_tx);
 
-        manager.dispatch_source_events(vec![InputSourceEvent::KeyStateChanged { key_events: 2 }]);
+        manager
+            .dispatch_source_events(vec![InputSourceEvent::KeyStateChanged { key_events: 2 }])
+            .await;
         let _ = event_rx.recv().await.unwrap();
 
         manager.source.clear();
-        assert!(manager.dispatch_source_events(vec![InputSourceEvent::DeviceSetChanged]));
+        assert!(
+            manager
+                .dispatch_source_events(vec![InputSourceEvent::DeviceSetChanged])
+                .await
+        );
 
         let end = event_rx.recv().await.unwrap();
         assert_eq!(end.kind, ShortcutKind::Hold);
-        assert_eq!(end.phase, ShortcutPhase::End);
+        assert_eq!(end.phase, ShortcutPhase::Cancel);
     }
 
-    #[test]
-    fn source_backpressure_is_busy_but_does_not_reconcile_shortcuts() {
+    #[tokio::test]
+    async fn source_backpressure_is_busy_but_does_not_reconcile_shortcuts() {
         let (event_tx, mut event_rx) = mpsc::channel(8);
         let source = TestInputSource::new();
         let mut manager = test_manager(source, event_tx);
 
         assert!(
-            manager.dispatch_source_events(vec![InputSourceEvent::SourceBackpressure {
-                key_events: MAX_KEY_EVENTS_PER_TICK,
-            }])
+            manager
+                .dispatch_source_events(vec![InputSourceEvent::SourceBackpressure {
+                    key_events: MAX_KEY_EVENTS_PER_TICK,
+                }])
+                .await
         );
         assert!(event_rx.try_recv().is_err());
     }
@@ -292,7 +302,7 @@ impl InputManagerRuntime<EvdevUdevEventSource> {
             tokio::select! {
                 command = self.command_rx.recv() => {
                     let should_shutdown = self.shutting_down(command.as_ref());
-                    busy = self.handle_command(command)?;
+                    busy = self.handle_command(command).await?;
                     if should_shutdown {
                         break;
                     }
@@ -307,12 +317,12 @@ impl InputManagerRuntime<EvdevUdevEventSource> {
                     if self.source.refresh_due() {
                         self.stats.device_refreshes += 1;
                         let events = self.source.refresh_devices()?;
-                        busy = self.dispatch_source_events(events);
+                        busy = self.dispatch_source_events(events).await;
                     }
                 }
                 _ = evdev_tick.tick() => {
                     let events = self.source.poll_key_events(MAX_KEY_EVENTS_PER_TICK)?;
-                    busy = self.dispatch_source_events(events);
+                    busy = self.dispatch_source_events(events).await;
                 }
             }
 
@@ -346,7 +356,7 @@ impl<S: InputEventSource> InputManagerRuntime<S> {
         })
     }
 
-    fn handle_command(&mut self, command: Option<InputManagerCommand>) -> Result<bool> {
+    async fn handle_command(&mut self, command: Option<InputManagerCommand>) -> Result<bool> {
         match command {
             Some(InputManagerCommand::UpdateShortcuts(shortcuts)) => {
                 let pressed_keys = self.source.pressed_keys().clone();
@@ -355,7 +365,7 @@ impl<S: InputEventSource> InputManagerRuntime<S> {
                     pressed_keys: &pressed_keys,
                     now: Instant::now(),
                 })? {
-                    self.emit_shortcut(event);
+                    self.emit_shortcut(event).await;
                 }
                 Ok(true)
             }
@@ -378,18 +388,20 @@ impl<S: InputEventSource> InputManagerRuntime<S> {
         matches!(command, Some(InputManagerCommand::Shutdown) | None)
     }
 
-    fn dispatch_source_events(&mut self, events: Vec<InputSourceEvent>) -> bool {
+    async fn dispatch_source_events(&mut self, events: Vec<InputSourceEvent>) -> bool {
         let mut busy = false;
 
         for event in events {
             match event {
                 InputSourceEvent::KeyStateChanged { key_events } => {
                     self.stats.key_events_seen += key_events as u64;
-                    self.transition_shortcuts(ShortcutTransitionCause::KeyStateChanged);
+                    self.transition_shortcuts(ShortcutTransitionCause::KeyStateChanged)
+                        .await;
                     busy = true;
                 }
                 InputSourceEvent::DeviceSetChanged => {
-                    self.transition_shortcuts(ShortcutTransitionCause::DeviceSetChanged);
+                    self.transition_shortcuts(ShortcutTransitionCause::DeviceSetChanged)
+                        .await;
                     busy = true;
                 }
                 InputSourceEvent::SourceBackpressure { key_events } => {
@@ -406,7 +418,7 @@ impl<S: InputEventSource> InputManagerRuntime<S> {
         busy
     }
 
-    fn transition_shortcuts(&mut self, cause: ShortcutTransitionCause) {
+    async fn transition_shortcuts(&mut self, cause: ShortcutTransitionCause) {
         let now = Instant::now();
         let pressed_keys = self.source.pressed_keys().clone();
         let input = match cause {
@@ -423,21 +435,31 @@ impl<S: InputEventSource> InputManagerRuntime<S> {
         match self.shortcuts.transition(input) {
             Ok(events) => {
                 for event in events {
-                    self.emit_shortcut(event);
+                    self.emit_shortcut(event).await;
                 }
             }
             Err(err) => warn!("Failed to apply shortcut transition: {:#}", err),
         }
     }
 
-    fn emit_shortcut(&mut self, event: ShortcutEvent) {
+    async fn emit_shortcut(&mut self, event: ShortcutEvent) {
         let phase = event.phase;
+        if matches!(phase, ShortcutPhase::End | ShortcutPhase::Cancel) {
+            if let Err(err) = self.event_tx.send(event).await {
+                debug!(
+                    "Dropped shortcut release event because app receiver closed: {}",
+                    err
+                );
+                return;
+            }
+            self.stats.shortcut_events_emitted += 1;
+            return;
+        }
+
         if let Err(err) = self.event_tx.try_send(event) {
             match phase {
                 ShortcutPhase::Start => warn!("Failed to send shortcut start event: {}", err),
-                ShortcutPhase::End => {
-                    debug!("Dropped shortcut end event under backpressure: {}", err)
-                }
+                ShortcutPhase::End | ShortcutPhase::Cancel => unreachable!(),
             }
             return;
         }

@@ -15,6 +15,7 @@ pub enum ShortcutKind {
 pub enum ShortcutPhase {
     Start,
     End,
+    Cancel,
 }
 
 #[derive(Debug, Clone)]
@@ -80,9 +81,8 @@ impl ShortcutController {
                 Ok(self.apply_key_state(pressed_keys, now))
             }
             ShortcutInput::DeviceSetChanged { pressed_keys, now } => {
-                let mut events = self.release_active_holds(now);
-                events.extend(self.apply_key_state(pressed_keys, now));
-                Ok(events)
+                let _ = pressed_keys;
+                Ok(self.cancel_holds(now))
             }
             ShortcutInput::ConfigChanged {
                 shortcuts,
@@ -176,16 +176,16 @@ impl ShortcutController {
         events
     }
 
-    fn release_active_holds(&mut self, now: Instant) -> Vec<ShortcutEvent> {
+    fn cancel_holds(&mut self, now: Instant) -> Vec<ShortcutEvent> {
         let mut events = Vec::new();
 
         for binding in &mut self.bindings {
-            if binding.kind == ShortcutKind::Hold && binding.active {
+            if binding.kind == ShortcutKind::Hold {
                 binding.active = false;
                 events.push(ShortcutEvent {
                     triggered_at: now,
                     kind: ShortcutKind::Hold,
-                    phase: ShortcutPhase::End,
+                    phase: ShortcutPhase::Cancel,
                 });
             }
         }
@@ -361,11 +361,9 @@ mod tests {
     }
 
     #[test]
-    fn device_churn_emits_one_hold_end() {
+    fn device_churn_emits_hold_cancel_even_when_inactive() {
         let mut controller = ShortcutController::new(config(None, Some("SUPER+ALT"))).unwrap();
-        let keys = parse_shortcut("SUPER+ALT").unwrap();
         let now = Instant::now();
-        key_transition(&mut controller, &keys, now);
 
         let released = HashSet::new();
         let first = controller
@@ -374,16 +372,9 @@ mod tests {
                 now: now + Duration::from_millis(10),
             })
             .unwrap();
-        let second = controller
-            .transition(ShortcutInput::DeviceSetChanged {
-                pressed_keys: &released,
-                now: now + Duration::from_millis(20),
-            })
-            .unwrap();
 
         assert_eq!(first.len(), 1);
-        assert_eq!(first[0].phase, ShortcutPhase::End);
-        assert!(second.is_empty());
+        assert_eq!(first[0].phase, ShortcutPhase::Cancel);
     }
 
     #[test]
@@ -420,7 +411,7 @@ mod tests {
     }
 
     #[test]
-    fn device_change_cause_releases_then_reconciles_pressed_keys() {
+    fn device_change_cause_cancels_without_restart() {
         let mut controller = ShortcutController::new(config(None, Some("SUPER+ALT"))).unwrap();
         let keys = parse_shortcut("SUPER+ALT").unwrap();
         let now = Instant::now();
@@ -433,8 +424,7 @@ mod tests {
             })
             .unwrap();
 
-        assert_eq!(events.len(), 2);
-        assert_eq!(events[0].phase, ShortcutPhase::End);
-        assert_eq!(events[1].phase, ShortcutPhase::Start);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].phase, ShortcutPhase::Cancel);
     }
 }
