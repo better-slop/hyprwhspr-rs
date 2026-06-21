@@ -1,7 +1,7 @@
 use crate::config::GroqConfig;
 use crate::transcription::audio::{encode_to_flac, EncodedAudio};
 use crate::transcription::postprocess::clean_transcription;
-use crate::transcription::{BackendMetrics, TranscriptionResult};
+use crate::transcription::{BackendMetrics, BackendPhaseProbe, TranscriptionResult};
 use anyhow::{Context, Result};
 use reqwest::{multipart, Client, Url};
 use serde::Deserialize;
@@ -81,14 +81,28 @@ impl GroqTranscriber {
             "🧠 Transcribing {:.2}s of audio via Groq", duration_secs
         );
 
-        let encode_start = Instant::now();
-        let encoded = encode_to_flac(&audio_data).await?;
-        let encode_duration = encode_start.elapsed();
+        let mut phases = Vec::new();
+        let (encoded_result, mut encode_phase) = BackendPhaseProbe::measure_async(
+            "backend.encode.flac",
+            Some(audio_data.len() * std::mem::size_of::<f32>()),
+            || encode_to_flac(&audio_data),
+        )
+        .await;
+        let encoded = encoded_result?;
         let encoded_len = encoded.data.len();
+        encode_phase.set_bytes_out(encoded_len);
+        let encode_duration = encode_phase.wall_duration;
+        phases.push(encode_phase);
 
-        let transcribe_start = Instant::now();
-        let (raw, timings) = self.send_with_retry(&encoded).await?;
-        let transcription_duration = transcribe_start.elapsed();
+        let (send_result, mut send_phase) =
+            BackendPhaseProbe::measure_async("backend.groq.request", Some(encoded_len), || {
+                self.send_with_retry(&encoded)
+            })
+            .await;
+        let (raw, timings) = send_result?;
+        send_phase.set_bytes_out(raw.len());
+        let transcription_duration = send_phase.wall_duration;
+        phases.push(send_phase);
         let cleaned = clean_transcription(&raw, &self.prompt);
 
         if cleaned.is_empty() {
@@ -103,6 +117,7 @@ impl GroqTranscriber {
             upload_duration: Some(timings.upload),
             response_duration: Some(timings.response),
             transcription_duration,
+            phases,
         };
 
         Ok(TranscriptionResult {

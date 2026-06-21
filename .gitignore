@@ -2,3 +2,4 @@ target
 dist
 release-notes.md
 .opencode
+heaptrack.*.*

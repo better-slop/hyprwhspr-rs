@@ -1,22 +1,18 @@
 use anyhow::{Context, Result};
-use futures_util::StreamExt;
-use std::future;
-use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time;
-use tokio_udev::{AsyncMonitorSocket, EventType, MonitorBuilder};
 use tracing::{debug, error, info, warn};
 
 use crate::config::ShortcutsConfig;
-use crate::input::registry::{is_input_event_node, KeyboardRegistry};
-use crate::input::shortcuts::{ShortcutController, ShortcutEvent, ShortcutPhase, ShortcutSummary};
+use crate::input::shortcuts::{
+    ShortcutController, ShortcutEvent, ShortcutInput, ShortcutPhase, ShortcutSummary,
+};
+use crate::input::source::{EvdevUdevEventSource, InputEventSource, InputSourceEvent};
 
 const EVDEV_TICK: Duration = Duration::from_millis(10);
-const UDEV_DEBOUNCE: Duration = Duration::from_millis(150);
-const UDEV_MAX_WAIT: Duration = Duration::from_secs(1);
 const MAX_KEY_EVENTS_PER_TICK: usize = 256;
 
 #[derive(Debug, Clone, Default)]
@@ -27,6 +23,138 @@ pub struct InputStats {
     pub key_events_seen: u64,
     pub shortcut_events_emitted: u64,
     pub loop_busy_ticks: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::input::shortcuts::ShortcutKind;
+    use evdev::Key;
+    use std::collections::HashSet;
+
+    struct TestInputSource {
+        pressed_keys: HashSet<Key>,
+        devices: Vec<PathBuf>,
+    }
+
+    impl TestInputSource {
+        fn new() -> Self {
+            Self {
+                pressed_keys: HashSet::new(),
+                devices: vec![PathBuf::from("/dev/input/event-test")],
+            }
+        }
+
+        fn press(&mut self, shortcut: &str) {
+            self.pressed_keys = crate::input::shortcuts::parse_shortcut(shortcut).unwrap();
+        }
+
+        fn clear(&mut self) {
+            self.pressed_keys.clear();
+        }
+    }
+
+    impl InputEventSource for TestInputSource {
+        fn pressed_keys(&self) -> &HashSet<Key> {
+            &self.pressed_keys
+        }
+
+        fn device_count(&self) -> usize {
+            self.devices.len()
+        }
+
+        fn device_paths(&self) -> Vec<PathBuf> {
+            self.devices.clone()
+        }
+    }
+
+    fn shortcuts(press: Option<&str>, hold: Option<&str>) -> ShortcutsConfig {
+        ShortcutsConfig {
+            press: press.map(str::to_string),
+            hold: hold.map(str::to_string),
+        }
+    }
+
+    fn test_manager(
+        source: TestInputSource,
+        event_tx: mpsc::Sender<ShortcutEvent>,
+    ) -> InputManagerRuntime<TestInputSource> {
+        let (_command_tx, command_rx) = mpsc::unbounded_channel();
+        InputManagerRuntime::with_source(
+            shortcuts(None, Some("SUPER+ALT")),
+            event_tx,
+            command_rx,
+            source,
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn source_key_state_starts_and_ends_hold_shortcut() {
+        let (event_tx, mut event_rx) = mpsc::channel(8);
+        let mut source = TestInputSource::new();
+        source.press("SUPER+ALT");
+        let mut manager = test_manager(source, event_tx);
+
+        assert!(
+            manager
+                .dispatch_source_events(vec![InputSourceEvent::KeyStateChanged { key_events: 2 }])
+                .await
+        );
+        let start = event_rx.recv().await.unwrap();
+        assert_eq!(start.kind, ShortcutKind::Hold);
+        assert_eq!(start.phase, ShortcutPhase::Start);
+
+        manager.source.clear();
+        assert!(
+            manager
+                .dispatch_source_events(vec![InputSourceEvent::KeyStateChanged { key_events: 1 }])
+                .await
+        );
+        let end = event_rx.recv().await.unwrap();
+        assert_eq!(end.kind, ShortcutKind::Hold);
+        assert_eq!(end.phase, ShortcutPhase::End);
+    }
+
+    #[tokio::test]
+    async fn source_device_change_releases_active_hold_without_key_event() {
+        let (event_tx, mut event_rx) = mpsc::channel(8);
+        let mut source = TestInputSource::new();
+        source.press("SUPER+ALT");
+        let mut manager = test_manager(source, event_tx);
+
+        manager
+            .dispatch_source_events(vec![InputSourceEvent::KeyStateChanged { key_events: 2 }])
+            .await;
+        let _ = event_rx.recv().await.unwrap();
+
+        manager.source.clear();
+        assert!(
+            manager
+                .dispatch_source_events(vec![InputSourceEvent::DeviceSetChanged])
+                .await
+        );
+
+        let end = event_rx.recv().await.unwrap();
+        assert_eq!(end.kind, ShortcutKind::Hold);
+        assert_eq!(end.phase, ShortcutPhase::Cancel);
+    }
+
+    #[tokio::test]
+    async fn source_backpressure_is_busy_but_does_not_reconcile_shortcuts() {
+        let (event_tx, mut event_rx) = mpsc::channel(8);
+        let source = TestInputSource::new();
+        let mut manager = test_manager(source, event_tx);
+
+        assert!(
+            manager
+                .dispatch_source_events(vec![InputSourceEvent::SourceBackpressure {
+                    key_events: MAX_KEY_EVENTS_PER_TICK,
+                }])
+                .await
+        );
+        assert!(event_rx.try_recv().is_err());
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -50,23 +178,19 @@ enum InputManagerCommand {
     Shutdown,
 }
 
-struct InputManagerRuntime {
+struct InputManagerRuntime<S = EvdevUdevEventSource> {
     command_rx: mpsc::UnboundedReceiver<InputManagerCommand>,
     event_tx: mpsc::Sender<ShortcutEvent>,
-    registry: KeyboardRegistry,
+    source: S,
     shortcuts: ShortcutController,
-    coalescer: UdevCoalescer,
     stats: InputStats,
     app_busy: bool,
     last_busy_log: Instant,
 }
 
-#[derive(Default)]
-struct UdevCoalescer {
-    dirty_since: Option<Instant>,
-    last_event_at: Option<Instant>,
-    fallback_rescan: bool,
-    last_fallback_rescan: Option<Instant>,
+enum ShortcutTransitionCause {
+    KeyStateChanged,
+    DeviceSetChanged,
 }
 
 impl InputManagerHandle {
@@ -154,39 +278,17 @@ fn run_input_thread(
     })
 }
 
-impl InputManagerRuntime {
+impl InputManagerRuntime<EvdevUdevEventSource> {
     fn new(
         shortcuts: ShortcutsConfig,
         event_tx: mpsc::Sender<ShortcutEvent>,
         command_rx: mpsc::UnboundedReceiver<InputManagerCommand>,
     ) -> Result<Self> {
-        let registry = KeyboardRegistry::open_initial()?;
-        let shortcuts = ShortcutController::new(shortcuts)?;
-
-        Ok(Self {
-            command_rx,
-            event_tx,
-            registry,
-            shortcuts,
-            coalescer: UdevCoalescer::default(),
-            stats: InputStats::default(),
-            app_busy: false,
-            last_busy_log: Instant::now(),
-        })
+        let source = EvdevUdevEventSource::open()?;
+        Self::with_source(shortcuts, event_tx, command_rx, source)
     }
 
     async fn run(mut self) -> Result<()> {
-        let mut udev_stream = match create_udev_stream() {
-            Ok(stream) => Some(stream),
-            Err(err) => {
-                warn!(
-                    "Input device monitor unavailable ({}); falling back to periodic rescan",
-                    err
-                );
-                self.coalescer.fallback_rescan = true;
-                None
-            }
-        };
         let mut evdev_tick = time::interval(EVDEV_TICK);
         evdev_tick.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
         let mut refresh_tick = time::interval(Duration::from_millis(50));
@@ -199,68 +301,28 @@ impl InputManagerRuntime {
 
             tokio::select! {
                 command = self.command_rx.recv() => {
-                    match command {
-                        Some(InputManagerCommand::UpdateShortcuts(shortcuts)) => {
-                            let releases = self.shortcuts.replace_shortcuts(shortcuts, self.registry.pressed_keys())?;
-                            for event in releases {
-                                self.emit_shortcut(event);
-                            }
-                            busy = true;
-                        }
-                        Some(InputManagerCommand::SetAppBusy(app_busy)) => {
-                            self.app_busy = app_busy;
-                        }
-                        Some(InputManagerCommand::Snapshot(reply_tx)) => {
-                            let _ = reply_tx.send(self.snapshot());
-                        }
-                        Some(InputManagerCommand::Shutdown) | None => {
-                            info!("Input manager shutting down");
-                            break;
-                        }
+                    let should_shutdown = self.shutting_down(command.as_ref());
+                    busy = self.handle_command(command).await?;
+                    if should_shutdown {
+                        break;
                     }
                 }
-                event = next_udev_event(&mut udev_stream), if udev_stream.is_some() && !self.coalescer.has_pending_refresh() => {
-                    match event {
-                        Some(Ok(event)) => {
-                            if self.coalescer.mark_dirty_event(&event, &mut self.stats) {
-                                busy = true;
-                            }
-                        }
-                        Some(Err(err)) => {
-                            warn!("Input device monitor unavailable ({}); falling back to periodic rescan", err);
-                            self.coalescer.fallback_rescan = true;
-                            udev_stream = None;
-                        }
-                        None => {
-                            warn!("Input device monitor closed; falling back to periodic rescan");
-                            self.coalescer.fallback_rescan = true;
-                            udev_stream = None;
-                        }
-                    }
+                event = self.source.next_udev_event(), if self.source.udev_events_enabled() => {
+                    let stats = self.source.handle_udev_event(event);
+                    self.stats.udev_events_seen += stats.seen;
+                    self.stats.udev_events_coalesced += stats.coalesced;
+                    busy = stats.seen > 0;
                 }
                 _ = refresh_tick.tick() => {
-                    if self.coalescer.refresh_due() {
-                        self.refresh_devices()?;
-                        busy = true;
+                    if self.source.refresh_due() {
+                        self.stats.device_refreshes += 1;
+                        let events = self.source.refresh_devices()?;
+                        busy = self.dispatch_source_events(events).await;
                     }
                 }
                 _ = evdev_tick.tick() => {
-                    let outcome = self.registry.poll_key_events(MAX_KEY_EVENTS_PER_TICK)?;
-                    if outcome.key_events > 0 {
-                        self.stats.key_events_seen += outcome.key_events as u64;
-                    }
-                    if outcome.devices_changed {
-                        if let Some(event) = self.shortcuts.on_device_set_changed() {
-                            self.emit_shortcut(event);
-                        }
-                    }
-                    if outcome.key_events > 0 || outcome.devices_changed {
-                        let now = Instant::now();
-                        for event in self.shortcuts.apply_key_state(self.registry.pressed_keys(), now) {
-                            self.emit_shortcut(event);
-                        }
-                        busy = true;
-                    }
+                    let events = self.source.poll_key_events(MAX_KEY_EVENTS_PER_TICK)?;
+                    busy = self.dispatch_source_events(events).await;
                 }
             }
 
@@ -272,29 +334,132 @@ impl InputManagerRuntime {
 
         Ok(())
     }
+}
 
-    fn refresh_devices(&mut self) -> Result<()> {
-        let changed = self.registry.refresh()?;
-        self.stats.device_refreshes += 1;
-        self.coalescer.clear_dirty();
+impl<S: InputEventSource> InputManagerRuntime<S> {
+    fn with_source(
+        shortcuts: ShortcutsConfig,
+        event_tx: mpsc::Sender<ShortcutEvent>,
+        command_rx: mpsc::UnboundedReceiver<InputManagerCommand>,
+        source: S,
+    ) -> Result<Self> {
+        let shortcuts = ShortcutController::new(shortcuts)?;
 
-        if changed {
-            if let Some(event) = self.shortcuts.on_device_set_changed() {
-                self.emit_shortcut(event);
+        Ok(Self {
+            command_rx,
+            event_tx,
+            source,
+            shortcuts,
+            stats: InputStats::default(),
+            app_busy: false,
+            last_busy_log: Instant::now(),
+        })
+    }
+
+    async fn handle_command(&mut self, command: Option<InputManagerCommand>) -> Result<bool> {
+        match command {
+            Some(InputManagerCommand::UpdateShortcuts(shortcuts)) => {
+                let pressed_keys = self.source.pressed_keys().clone();
+                for event in self.shortcuts.transition(ShortcutInput::ConfigChanged {
+                    shortcuts,
+                    pressed_keys: &pressed_keys,
+                    now: Instant::now(),
+                })? {
+                    self.emit_shortcut(event).await;
+                }
+                Ok(true)
+            }
+            Some(InputManagerCommand::SetAppBusy(app_busy)) => {
+                self.app_busy = app_busy;
+                Ok(false)
+            }
+            Some(InputManagerCommand::Snapshot(reply_tx)) => {
+                let _ = reply_tx.send(self.snapshot());
+                Ok(false)
+            }
+            Some(InputManagerCommand::Shutdown) | None => {
+                info!("Input manager shutting down");
+                Ok(false)
+            }
+        }
+    }
+
+    fn shutting_down(&self, command: Option<&InputManagerCommand>) -> bool {
+        matches!(command, Some(InputManagerCommand::Shutdown) | None)
+    }
+
+    async fn dispatch_source_events(&mut self, events: Vec<InputSourceEvent>) -> bool {
+        let mut busy = false;
+
+        for event in events {
+            match event {
+                InputSourceEvent::KeyStateChanged { key_events } => {
+                    self.stats.key_events_seen += key_events as u64;
+                    self.transition_shortcuts(ShortcutTransitionCause::KeyStateChanged)
+                        .await;
+                    busy = true;
+                }
+                InputSourceEvent::DeviceSetChanged => {
+                    self.transition_shortcuts(ShortcutTransitionCause::DeviceSetChanged)
+                        .await;
+                    busy = true;
+                }
+                InputSourceEvent::SourceBackpressure { key_events } => {
+                    debug!(
+                        key_events,
+                        max_key_events_per_tick = MAX_KEY_EVENTS_PER_TICK,
+                        "Input source reached per-tick key event cap"
+                    );
+                    busy = true;
+                }
             }
         }
 
-        Ok(())
+        busy
     }
 
-    fn emit_shortcut(&mut self, event: ShortcutEvent) {
+    async fn transition_shortcuts(&mut self, cause: ShortcutTransitionCause) {
+        let now = Instant::now();
+        let pressed_keys = self.source.pressed_keys().clone();
+        let input = match cause {
+            ShortcutTransitionCause::KeyStateChanged => ShortcutInput::KeyStateChanged {
+                pressed_keys: &pressed_keys,
+                now,
+            },
+            ShortcutTransitionCause::DeviceSetChanged => ShortcutInput::DeviceSetChanged {
+                pressed_keys: &pressed_keys,
+                now,
+            },
+        };
+
+        match self.shortcuts.transition(input) {
+            Ok(events) => {
+                for event in events {
+                    self.emit_shortcut(event).await;
+                }
+            }
+            Err(err) => warn!("Failed to apply shortcut transition: {:#}", err),
+        }
+    }
+
+    async fn emit_shortcut(&mut self, event: ShortcutEvent) {
         let phase = event.phase;
+        if matches!(phase, ShortcutPhase::End | ShortcutPhase::Cancel) {
+            if let Err(err) = self.event_tx.send(event).await {
+                debug!(
+                    "Dropped shortcut release event because app receiver closed: {}",
+                    err
+                );
+                return;
+            }
+            self.stats.shortcut_events_emitted += 1;
+            return;
+        }
+
         if let Err(err) = self.event_tx.try_send(event) {
             match phase {
                 ShortcutPhase::Start => warn!("Failed to send shortcut start event: {}", err),
-                ShortcutPhase::End => {
-                    debug!("Dropped shortcut end event under backpressure: {}", err)
-                }
+                ShortcutPhase::End | ShortcutPhase::Cancel => unreachable!(),
             }
             return;
         }
@@ -303,8 +468,8 @@ impl InputManagerRuntime {
 
     fn snapshot(&self) -> InputSnapshot {
         InputSnapshot {
-            device_count: self.registry.device_count(),
-            devices: self.registry.device_paths(),
+            device_count: self.source.device_count(),
+            devices: self.source.device_paths(),
             shortcuts: self.shortcuts.summaries(),
             app_busy: self.app_busy,
             stats: self.stats.clone(),
@@ -330,81 +495,5 @@ impl InputManagerRuntime {
 
         self.stats.loop_busy_ticks = 0;
         self.last_busy_log = Instant::now();
-    }
-}
-
-impl UdevCoalescer {
-    fn mark_dirty_event(&mut self, event: &tokio_udev::Event, stats: &mut InputStats) -> bool {
-        let Some(path) = event.device().devnode().map(Path::to_path_buf) else {
-            return false;
-        };
-        if !is_input_event_node(&path) {
-            return false;
-        }
-        if !matches!(
-            event.event_type(),
-            EventType::Add | EventType::Remove | EventType::Change
-        ) {
-            return false;
-        }
-
-        stats.udev_events_seen += 1;
-        let now = Instant::now();
-        if self.dirty_since.is_some() {
-            stats.udev_events_coalesced += 1;
-        } else {
-            self.dirty_since = Some(now);
-        }
-        self.last_event_at = Some(now);
-        true
-    }
-
-    fn refresh_due(&mut self) -> bool {
-        if self.fallback_rescan {
-            let now = Instant::now();
-            let due = self
-                .last_fallback_rescan
-                .is_none_or(|last| now.duration_since(last) >= Duration::from_secs(1));
-            if due {
-                self.last_fallback_rescan = Some(now);
-                return true;
-            }
-        }
-
-        let Some(dirty_since) = self.dirty_since else {
-            return false;
-        };
-        let now = Instant::now();
-        let quiet_for = self.last_event_at.map(|at| now.duration_since(at));
-        now.duration_since(dirty_since) >= UDEV_MAX_WAIT
-            || quiet_for.is_some_and(|elapsed| elapsed >= UDEV_DEBOUNCE)
-    }
-
-    fn clear_dirty(&mut self) {
-        self.dirty_since = None;
-        self.last_event_at = None;
-    }
-
-    fn has_pending_refresh(&self) -> bool {
-        self.dirty_since.is_some()
-    }
-}
-
-fn create_udev_stream() -> Result<AsyncMonitorSocket> {
-    let monitor = MonitorBuilder::new()?
-        // Keep the kernel filter at subsystem=input. Some keyboards do not
-        // consistently expose a devtype/tag that is safe to require here.
-        .match_subsystem("input")?
-        .listen()
-        .context("failed to listen for input udev events")?;
-    AsyncMonitorSocket::new(monitor).context("failed to create async udev monitor socket")
-}
-
-async fn next_udev_event(
-    stream: &mut Option<AsyncMonitorSocket>,
-) -> Option<Result<tokio_udev::Event, io::Error>> {
-    match stream {
-        Some(stream) => stream.next().await,
-        None => future::pending().await,
     }
 }

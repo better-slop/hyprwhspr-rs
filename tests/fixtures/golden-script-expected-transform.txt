@@ -1,0 +1,5 @@
+Hello world. This is a basic dictation test. This sentence has a ,, a ., a ?, and an !. (hello, world) "yes" 'yes yes yes' "this should be wrapped in double quotes" 'short phrase' The price is $25.99. The meeting is at 03:30 P.M on Friday. I have 123 apples and 4500 oranges. My email is test@example.com. Visit gpt.com and ask about HTTP APIs.
+This should be on the next line.	item 1.	item 2. Start a list:
+First item
+Second item
+Third item. (1, 2, 3) "hello, are you there?" 'do not panic' I use Rust, Tokio, ONNX runtime, and Hyprland. This is a noisy cleanup test, "this phrase has spaces inside" ("nested") The shortcut should not get stuck after this recording ends. Final sentence. If this appears correctly, transcription, normalization, cleanup, and injection are working.

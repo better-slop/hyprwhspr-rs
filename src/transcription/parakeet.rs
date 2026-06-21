@@ -114,6 +114,7 @@ impl ParakeetTranscriber {
             upload_duration: None,
             response_duration: None,
             transcription_duration,
+            phases: Vec::new(),
         };
 
         Ok(TranscriptionResult {

@@ -423,6 +423,14 @@ impl HyprwhsprApp {
                     debug!("Hold release ignored (no active hold-triggered recording)");
                 }
             }
+            (ShortcutKind::Hold, ShortcutPhase::Cancel) => {
+                if self.recording_session.is_some() {
+                    warn!("Input device changed while recording; stopping active recording");
+                    self.stop_recording(event.triggered_at).await?;
+                } else {
+                    debug!("Input device cancel ignored (no active recording)");
+                }
+            }
             _ => {}
         }
 

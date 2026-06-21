@@ -1,12 +1,12 @@
 use crate::transcription::{
-    clean_transcription, contains_only_non_speech_markers, BackendMetrics, TranscriptionResult,
+    clean_transcription, contains_only_non_speech_markers, BackendMetrics, BackendPhaseProbe,
+    TranscriptionResult,
 };
 use anyhow::{anyhow, Context, Result};
 use std::convert::TryFrom;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Instant;
 use tracing::{debug, info, trace, warn};
 
 #[derive(Debug, Clone)]
@@ -191,19 +191,34 @@ impl WhisperManager {
         let temp_wav = self
             .temp_dir
             .join(format!("audio_{}.wav", std::process::id()));
-        let encode_start = Instant::now();
-        self.save_audio_as_wav(&audio_data, &temp_wav)?;
-        let encode_duration = encode_start.elapsed();
+        let mut phases = Vec::new();
+        let (encode_result, mut encode_phase) = BackendPhaseProbe::measure(
+            "backend.whisper.temp_wav",
+            Some(audio_data.len() * std::mem::size_of::<f32>()),
+            || self.save_audio_as_wav(&audio_data, &temp_wav),
+        );
+        encode_result?;
         let encoded_bytes = fs::metadata(&temp_wav)
             .ok()
             .and_then(|meta| usize::try_from(meta.len()).ok());
+        if let Some(bytes) = encoded_bytes {
+            encode_phase.set_bytes_out(bytes);
+        }
+        let encode_duration = encode_phase.wall_duration;
+        phases.push(encode_phase);
 
         debug!("Saved audio to: {:?}", temp_wav);
 
         // Run whisper.cpp CLI
-        let transcribe_start = Instant::now();
-        let transcription = self.run_whisper_cli(&temp_wav).await?;
-        let transcription_duration = transcribe_start.elapsed();
+        let (transcription_result, mut whisper_phase) =
+            BackendPhaseProbe::measure_async("backend.whisper.cli", encoded_bytes, || {
+                self.run_whisper_cli(&temp_wav)
+            })
+            .await;
+        let transcription = transcription_result?;
+        whisper_phase.set_bytes_out(transcription.len());
+        let transcription_duration = whisper_phase.wall_duration;
+        phases.push(whisper_phase);
         let trimmed = transcription.trim();
         let cleaned_transcription = clean_transcription(trimmed, &self.whisper_prompt);
 
@@ -216,6 +231,7 @@ impl WhisperManager {
             upload_duration: None,
             response_duration: None,
             transcription_duration,
+            phases,
         };
 
         if cleaned_transcription.is_empty() {
