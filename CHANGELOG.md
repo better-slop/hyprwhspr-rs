@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.3.31] (https://github.com/better-slop/hyprwhspr-rs/compare/v0.3.30...v0.3.31) - 2026-06-21
+
+### Features
+- improve perf and tooling around resource analysis ([#145](https://github.com/better-slop/hyprwhspr-rs/pull/145))
+- *(text)* normalize transcripts with ITN ([#144](https://github.com/better-slop/hyprwhspr-rs/pull/144))
+- improve shortcut/input handling ([#143](https://github.com/better-slop/hyprwhspr-rs/pull/143))
+
+
+### Fixes
+- *(shortcuts)* input loss/rescan/change bugginess ([#139](https://github.com/better-slop/hyprwhspr-rs/pull/139))
+
+
+### Other
+- update readme
+
 ## [0.3.30] (https://github.com/better-slop/hyprwhspr-rs/compare/v0.3.29...v0.3.30) - 2026-06-08
 
 ### Chores
