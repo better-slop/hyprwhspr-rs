@@ -1,8 +1,10 @@
 use anyhow::Result;
 use evdev::{Device, InputEventKind, Key};
 use std::collections::HashSet;
+use std::fs;
 use std::io;
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, RawFd};
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use tracing::{debug, error, info, warn};
 
@@ -59,6 +61,15 @@ impl KeyboardRegistry {
         let mut removed_devices = HashSet::new();
 
         for entry in &mut self.devices {
+            if is_device_node_stale(entry.device.as_raw_fd(), &entry.path) {
+                warn!(
+                    "Keyboard device node changed or disappeared at {:?}; refreshing input devices",
+                    entry.path
+                );
+                removed_devices.insert(entry.path.clone());
+                continue;
+            }
+
             match entry.device.fetch_events() {
                 Ok(events) => {
                     for event in events {
@@ -98,6 +109,7 @@ impl KeyboardRegistry {
                 .retain(|device| !removed_devices.contains(&device.path));
             self.pressed_keys.clear();
             outcome.devices_changed = true;
+            self.refresh()?;
         }
 
         Ok(outcome)
@@ -184,6 +196,29 @@ fn is_device_disconnect_error(err: &io::Error) -> bool {
     )
 }
 
+fn is_device_node_stale(fd: RawFd, path: &Path) -> bool {
+    match fd_matches_path(fd, path) {
+        Ok(matches) => !matches,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => true,
+        Err(err) if is_device_disconnect_error(&err) => true,
+        Err(err) => {
+            debug!("Failed to validate input device node {:?}: {}", path, err);
+            false
+        }
+    }
+}
+
+fn fd_matches_path(fd: RawFd, path: &Path) -> io::Result<bool> {
+    let mut fd_stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+    if unsafe { libc::fstat(fd, fd_stat.as_mut_ptr()) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let fd_stat = unsafe { fd_stat.assume_init() };
+    let path_metadata = fs::metadata(path)?;
+
+    Ok(path_metadata.dev() == fd_stat.st_dev && path_metadata.ino() == fd_stat.st_ino)
+}
+
 fn set_device_nonblocking(device: &Device) -> Result<()> {
     let fd = device.as_raw_fd();
 
@@ -213,4 +248,54 @@ fn set_device_nonblocking(device: &Device) -> Result<()> {
 pub(super) fn is_input_event_node(path: &Path) -> bool {
     path.to_str()
         .is_some_and(|node| node.starts_with("/dev/input/event"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+
+    fn temp_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "hyprwhspr-rs-{name}-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ))
+    }
+
+    #[test]
+    fn open_fd_matches_existing_path() {
+        let path = temp_path("matching-fd");
+        fs::write(&path, b"device").unwrap();
+        let file = File::open(&path).unwrap();
+
+        assert!(fd_matches_path(file.as_raw_fd(), &path).unwrap());
+        assert!(!is_device_node_stale(file.as_raw_fd(), &path));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn recreated_path_marks_open_fd_stale() {
+        let path = temp_path("recreated-fd");
+        fs::write(&path, b"old-device").unwrap();
+        let file = File::open(&path).unwrap();
+        fs::remove_file(&path).unwrap();
+        fs::write(&path, b"new-device").unwrap();
+
+        assert!(!fd_matches_path(file.as_raw_fd(), &path).unwrap());
+        assert!(is_device_node_stale(file.as_raw_fd(), &path));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn missing_path_marks_open_fd_stale() {
+        let path = temp_path("missing-fd");
+        fs::write(&path, b"device").unwrap();
+        let file = File::open(&path).unwrap();
+        fs::remove_file(&path).unwrap();
+
+        assert!(is_device_node_stale(file.as_raw_fd(), &path));
+    }
 }
