@@ -1,0 +1,79 @@
+name: nix
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+  pull_request_review:
+    types:
+      - submitted
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  build:
+    if: >-
+      (
+        github.event_name == 'pull_request' &&
+        !github.event.pull_request.draft &&
+        contains(fromJson('["OWNER","MEMBER"]'), github.event.pull_request.author_association)
+      ) || (
+        github.event_name == 'pull_request_review' &&
+        github.event.review.state == 'approved' &&
+        contains(fromJson('["OWNER","MEMBER"]'), github.event.review.author_association)
+      )
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64-linux
+            runner: blacksmith-2vcpu-ubuntu-2404
+            experimental: false
+          - arch: aarch64-linux
+            runner: blacksmith-2vcpu-ubuntu-2404-arm
+            experimental: true
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.experimental }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create Nix directories
+        if: ${{ contains(matrix.runner, 'blacksmith') }}
+        run: |
+          sudo mkdir -p /nix/store
+          sudo chmod -R 777 /nix
+
+      - name: Mount Nix store sticky disk
+        if: ${{ contains(matrix.runner, 'blacksmith') }}
+        uses: useblacksmith/stickydisk@v1
+        with:
+          key: ${{ github.repository }}-nix-store-${{ matrix.arch }}
+          path: /nix
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Configure Nix cache
+        if: ${{ !contains(matrix.runner, 'blacksmith') }}
+        uses: DeterminateSystems/magic-nix-cache-action@main
+
+      - name: Build flake package (${{ matrix.arch }})
+        run: nix build .#default --print-build-logs
+
+      - name: Run flake checks (${{ matrix.arch }})
+        run: nix flake check --print-build-logs
+
+      - name: Stop Nix daemon before sticky disk cleanup
+        if: ${{ always() && contains(matrix.runner, 'blacksmith') }}
+        run: |
+          sudo systemctl stop nix-daemon.socket nix-daemon.service || true
+          sudo pkill -x nix-daemon || true
