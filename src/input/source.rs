@@ -8,20 +8,25 @@ use std::time::{Duration, Instant};
 use tokio_udev::{AsyncMonitorSocket, EventType, MonitorBuilder};
 use tracing::warn;
 
-use crate::input::registry::{KeyboardRegistry, PollOutcome, is_input_event_node};
+use crate::input::registry::{is_input_event_node, KeyboardRegistry, PollOutcome};
 
 const UDEV_DEBOUNCE: Duration = Duration::from_millis(150);
 const UDEV_MAX_WAIT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum InputSourceEvent {
-    KeyStateChanged { key_events: usize },
+    KeyStateChanged {
+        key_events: usize,
+    },
     DeviceSetChanged,
-    SourceBackpressure { key_events: usize },
+    SourceBackpressure {
+        drained_events: usize,
+        key_events: usize,
+    },
 }
 
 pub(super) trait InputEventSource {
-    fn pressed_keys(&self) -> &HashSet<evdev::Key>;
+    fn pressed_keys(&self) -> &HashSet<evdev::KeyCode>;
     fn device_count(&self) -> usize;
     fn device_paths(&self) -> Vec<PathBuf>;
 }
@@ -69,8 +74,8 @@ impl EvdevUdevEventSource {
         })
     }
 
-    pub(super) fn poll_key_events(&mut self, max_events: usize) -> Result<Vec<InputSourceEvent>> {
-        events_from_poll(self.registry.poll_key_events(max_events)?)
+    pub(super) fn poll_input_events(&mut self, max_events: usize) -> Result<Vec<InputSourceEvent>> {
+        events_from_poll(self.registry.poll_input_events(max_events)?)
     }
 
     pub(super) fn udev_events_enabled(&self) -> bool {
@@ -125,7 +130,7 @@ impl EvdevUdevEventSource {
 }
 
 impl InputEventSource for EvdevUdevEventSource {
-    fn pressed_keys(&self) -> &HashSet<evdev::Key> {
+    fn pressed_keys(&self) -> &HashSet<evdev::KeyCode> {
         self.registry.pressed_keys()
     }
 
@@ -141,7 +146,7 @@ impl InputEventSource for EvdevUdevEventSource {
 fn events_from_poll(outcome: PollOutcome) -> Result<Vec<InputSourceEvent>> {
     let mut events = Vec::new();
 
-    if outcome.key_events > 0 {
+    if outcome.key_events > 0 || outcome.backpressure {
         events.push(InputSourceEvent::KeyStateChanged {
             key_events: outcome.key_events,
         });
@@ -151,6 +156,7 @@ fn events_from_poll(outcome: PollOutcome) -> Result<Vec<InputSourceEvent>> {
     }
     if outcome.backpressure {
         events.push(InputSourceEvent::SourceBackpressure {
+            drained_events: outcome.drained_events,
             key_events: outcome.key_events,
         });
     }
@@ -235,6 +241,7 @@ mod tests {
     #[test]
     fn poll_outcome_reports_backpressure_as_source_event() {
         let events = events_from_poll(PollOutcome {
+            drained_events: 256,
             key_events: 256,
             devices_changed: false,
             backpressure: true,
@@ -245,7 +252,10 @@ mod tests {
             events,
             vec![
                 InputSourceEvent::KeyStateChanged { key_events: 256 },
-                InputSourceEvent::SourceBackpressure { key_events: 256 }
+                InputSourceEvent::SourceBackpressure {
+                    drained_events: 256,
+                    key_events: 256
+                }
             ]
         );
     }
@@ -253,6 +263,7 @@ mod tests {
     #[test]
     fn device_set_change_is_semantic_source_event() {
         let events = events_from_poll(PollOutcome {
+            drained_events: 0,
             key_events: 0,
             devices_changed: true,
             backpressure: false,
@@ -260,5 +271,27 @@ mod tests {
         .unwrap();
 
         assert_eq!(events, vec![InputSourceEvent::DeviceSetChanged]);
+    }
+
+    #[test]
+    fn non_key_backpressure_reconciles_shortcut_state() {
+        let events = events_from_poll(PollOutcome {
+            drained_events: 256,
+            key_events: 0,
+            devices_changed: false,
+            backpressure: true,
+        })
+        .unwrap();
+
+        assert_eq!(
+            events,
+            vec![
+                InputSourceEvent::KeyStateChanged { key_events: 0 },
+                InputSourceEvent::SourceBackpressure {
+                    drained_events: 256,
+                    key_events: 0,
+                }
+            ]
+        );
     }
 }

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use evdev::Key;
+use evdev::KeyCode;
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
@@ -34,16 +34,16 @@ pub struct ShortcutSummary {
 
 pub(super) enum ShortcutInput<'a> {
     KeyStateChanged {
-        pressed_keys: &'a HashSet<Key>,
+        pressed_keys: &'a HashSet<KeyCode>,
         now: Instant,
     },
     DeviceSetChanged {
-        pressed_keys: &'a HashSet<Key>,
+        pressed_keys: &'a HashSet<KeyCode>,
         now: Instant,
     },
     ConfigChanged {
         shortcuts: ShortcutsConfig,
-        pressed_keys: &'a HashSet<Key>,
+        pressed_keys: &'a HashSet<KeyCode>,
         now: Instant,
     },
 }
@@ -57,7 +57,7 @@ pub(super) struct ShortcutController {
 struct ShortcutBinding {
     kind: ShortcutKind,
     name: String,
-    keys: HashSet<Key>,
+    keys: HashSet<KeyCode>,
     active: bool,
     last_trigger: Instant,
 }
@@ -95,7 +95,7 @@ impl ShortcutController {
     fn replace_shortcuts(
         &mut self,
         shortcuts: ShortcutsConfig,
-        pressed_keys: &HashSet<Key>,
+        pressed_keys: &HashSet<KeyCode>,
         now: Instant,
     ) -> Result<Vec<ShortcutEvent>> {
         let mut releases = Vec::new();
@@ -138,7 +138,11 @@ impl ShortcutController {
         Ok(releases)
     }
 
-    fn apply_key_state(&mut self, pressed_keys: &HashSet<Key>, now: Instant) -> Vec<ShortcutEvent> {
+    fn apply_key_state(
+        &mut self,
+        pressed_keys: &HashSet<KeyCode>,
+        now: Instant,
+    ) -> Vec<ShortcutEvent> {
         let mut events = Vec::new();
 
         for binding in &mut self.bindings {
@@ -217,7 +221,7 @@ impl ShortcutBinding {
     }
 }
 
-pub(super) fn parse_shortcut(shortcut: &str) -> Result<HashSet<Key>> {
+pub(super) fn parse_shortcut(shortcut: &str) -> Result<HashSet<KeyCode>> {
     let mut keys = HashSet::new();
 
     for part in shortcut.split('+') {
@@ -233,75 +237,75 @@ pub(super) fn parse_shortcut(shortcut: &str) -> Result<HashSet<Key>> {
     Ok(keys)
 }
 
-fn parse_key(key_str: &str) -> Result<Key> {
+fn parse_key(key_str: &str) -> Result<KeyCode> {
     match key_str {
-        "SUPER" | "META" | "WIN" | "WINDOWS" => Ok(Key::KEY_LEFTMETA),
-        "ALT" => Ok(Key::KEY_LEFTALT),
-        "CTRL" | "CONTROL" => Ok(Key::KEY_LEFTCTRL),
-        "SHIFT" => Ok(Key::KEY_LEFTSHIFT),
-        "F1" => Ok(Key::KEY_F1),
-        "F2" => Ok(Key::KEY_F2),
-        "F3" => Ok(Key::KEY_F3),
-        "F4" => Ok(Key::KEY_F4),
-        "F5" => Ok(Key::KEY_F5),
-        "F6" => Ok(Key::KEY_F6),
-        "F7" => Ok(Key::KEY_F7),
-        "F8" => Ok(Key::KEY_F8),
-        "F9" => Ok(Key::KEY_F9),
-        "F10" => Ok(Key::KEY_F10),
-        "F11" => Ok(Key::KEY_F11),
-        "F12" => Ok(Key::KEY_F12),
-        "A" => Ok(Key::KEY_A),
-        "B" => Ok(Key::KEY_B),
-        "C" => Ok(Key::KEY_C),
-        "D" => Ok(Key::KEY_D),
-        "E" => Ok(Key::KEY_E),
-        "F" => Ok(Key::KEY_F),
-        "G" => Ok(Key::KEY_G),
-        "H" => Ok(Key::KEY_H),
-        "I" => Ok(Key::KEY_I),
-        "J" => Ok(Key::KEY_J),
-        "K" => Ok(Key::KEY_K),
-        "L" => Ok(Key::KEY_L),
-        "M" => Ok(Key::KEY_M),
-        "N" => Ok(Key::KEY_N),
-        "O" => Ok(Key::KEY_O),
-        "P" => Ok(Key::KEY_P),
-        "Q" => Ok(Key::KEY_Q),
-        "R" => Ok(Key::KEY_R),
-        "S" => Ok(Key::KEY_S),
-        "T" => Ok(Key::KEY_T),
-        "U" => Ok(Key::KEY_U),
-        "V" => Ok(Key::KEY_V),
-        "W" => Ok(Key::KEY_W),
-        "X" => Ok(Key::KEY_X),
-        "Y" => Ok(Key::KEY_Y),
-        "Z" => Ok(Key::KEY_Z),
-        "0" => Ok(Key::KEY_0),
-        "1" => Ok(Key::KEY_1),
-        "2" => Ok(Key::KEY_2),
-        "3" => Ok(Key::KEY_3),
-        "4" => Ok(Key::KEY_4),
-        "5" => Ok(Key::KEY_5),
-        "6" => Ok(Key::KEY_6),
-        "7" => Ok(Key::KEY_7),
-        "8" => Ok(Key::KEY_8),
-        "9" => Ok(Key::KEY_9),
-        "SPACE" => Ok(Key::KEY_SPACE),
-        "ENTER" | "RETURN" => Ok(Key::KEY_ENTER),
-        "ESC" | "ESCAPE" => Ok(Key::KEY_ESC),
-        "TAB" => Ok(Key::KEY_TAB),
-        "BACKSPACE" => Ok(Key::KEY_BACKSPACE),
-        "DELETE" | "DEL" => Ok(Key::KEY_DELETE),
-        "INSERT" | "INS" => Ok(Key::KEY_INSERT),
-        "HOME" => Ok(Key::KEY_HOME),
-        "END" => Ok(Key::KEY_END),
-        "PAGEUP" | "PGUP" => Ok(Key::KEY_PAGEUP),
-        "PAGEDOWN" | "PGDOWN" => Ok(Key::KEY_PAGEDOWN),
-        "UP" => Ok(Key::KEY_UP),
-        "DOWN" => Ok(Key::KEY_DOWN),
-        "LEFT" => Ok(Key::KEY_LEFT),
-        "RIGHT" => Ok(Key::KEY_RIGHT),
+        "SUPER" | "META" | "WIN" | "WINDOWS" => Ok(KeyCode::KEY_LEFTMETA),
+        "ALT" => Ok(KeyCode::KEY_LEFTALT),
+        "CTRL" | "CONTROL" => Ok(KeyCode::KEY_LEFTCTRL),
+        "SHIFT" => Ok(KeyCode::KEY_LEFTSHIFT),
+        "F1" => Ok(KeyCode::KEY_F1),
+        "F2" => Ok(KeyCode::KEY_F2),
+        "F3" => Ok(KeyCode::KEY_F3),
+        "F4" => Ok(KeyCode::KEY_F4),
+        "F5" => Ok(KeyCode::KEY_F5),
+        "F6" => Ok(KeyCode::KEY_F6),
+        "F7" => Ok(KeyCode::KEY_F7),
+        "F8" => Ok(KeyCode::KEY_F8),
+        "F9" => Ok(KeyCode::KEY_F9),
+        "F10" => Ok(KeyCode::KEY_F10),
+        "F11" => Ok(KeyCode::KEY_F11),
+        "F12" => Ok(KeyCode::KEY_F12),
+        "A" => Ok(KeyCode::KEY_A),
+        "B" => Ok(KeyCode::KEY_B),
+        "C" => Ok(KeyCode::KEY_C),
+        "D" => Ok(KeyCode::KEY_D),
+        "E" => Ok(KeyCode::KEY_E),
+        "F" => Ok(KeyCode::KEY_F),
+        "G" => Ok(KeyCode::KEY_G),
+        "H" => Ok(KeyCode::KEY_H),
+        "I" => Ok(KeyCode::KEY_I),
+        "J" => Ok(KeyCode::KEY_J),
+        "K" => Ok(KeyCode::KEY_K),
+        "L" => Ok(KeyCode::KEY_L),
+        "M" => Ok(KeyCode::KEY_M),
+        "N" => Ok(KeyCode::KEY_N),
+        "O" => Ok(KeyCode::KEY_O),
+        "P" => Ok(KeyCode::KEY_P),
+        "Q" => Ok(KeyCode::KEY_Q),
+        "R" => Ok(KeyCode::KEY_R),
+        "S" => Ok(KeyCode::KEY_S),
+        "T" => Ok(KeyCode::KEY_T),
+        "U" => Ok(KeyCode::KEY_U),
+        "V" => Ok(KeyCode::KEY_V),
+        "W" => Ok(KeyCode::KEY_W),
+        "X" => Ok(KeyCode::KEY_X),
+        "Y" => Ok(KeyCode::KEY_Y),
+        "Z" => Ok(KeyCode::KEY_Z),
+        "0" => Ok(KeyCode::KEY_0),
+        "1" => Ok(KeyCode::KEY_1),
+        "2" => Ok(KeyCode::KEY_2),
+        "3" => Ok(KeyCode::KEY_3),
+        "4" => Ok(KeyCode::KEY_4),
+        "5" => Ok(KeyCode::KEY_5),
+        "6" => Ok(KeyCode::KEY_6),
+        "7" => Ok(KeyCode::KEY_7),
+        "8" => Ok(KeyCode::KEY_8),
+        "9" => Ok(KeyCode::KEY_9),
+        "SPACE" => Ok(KeyCode::KEY_SPACE),
+        "ENTER" | "RETURN" => Ok(KeyCode::KEY_ENTER),
+        "ESC" | "ESCAPE" => Ok(KeyCode::KEY_ESC),
+        "TAB" => Ok(KeyCode::KEY_TAB),
+        "BACKSPACE" => Ok(KeyCode::KEY_BACKSPACE),
+        "DELETE" | "DEL" => Ok(KeyCode::KEY_DELETE),
+        "INSERT" | "INS" => Ok(KeyCode::KEY_INSERT),
+        "HOME" => Ok(KeyCode::KEY_HOME),
+        "END" => Ok(KeyCode::KEY_END),
+        "PAGEUP" | "PGUP" => Ok(KeyCode::KEY_PAGEUP),
+        "PAGEDOWN" | "PGDOWN" => Ok(KeyCode::KEY_PAGEDOWN),
+        "UP" => Ok(KeyCode::KEY_UP),
+        "DOWN" => Ok(KeyCode::KEY_DOWN),
+        "LEFT" => Ok(KeyCode::KEY_LEFT),
+        "RIGHT" => Ok(KeyCode::KEY_RIGHT),
         _ => Err(anyhow::anyhow!("Unknown key: {}", key_str)),
     }
 }
@@ -319,7 +323,7 @@ mod tests {
 
     fn key_transition(
         controller: &mut ShortcutController,
-        pressed_keys: &HashSet<Key>,
+        pressed_keys: &HashSet<KeyCode>,
         now: Instant,
     ) -> Vec<ShortcutEvent> {
         controller

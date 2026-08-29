@@ -13,7 +13,7 @@ use crate::input::shortcuts::{
 use crate::input::source::{EvdevUdevEventSource, InputEventSource, InputSourceEvent};
 
 const EVDEV_TICK: Duration = Duration::from_millis(10);
-const MAX_KEY_EVENTS_PER_TICK: usize = 256;
+const MAX_INPUT_EVENTS_PER_TICK: usize = 256;
 
 #[derive(Debug, Clone, Default)]
 pub struct InputStats {
@@ -26,136 +26,7 @@ pub struct InputStats {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::input::shortcuts::ShortcutKind;
-    use evdev::Key;
-    use std::collections::HashSet;
-
-    struct TestInputSource {
-        pressed_keys: HashSet<Key>,
-        devices: Vec<PathBuf>,
-    }
-
-    impl TestInputSource {
-        fn new() -> Self {
-            Self {
-                pressed_keys: HashSet::new(),
-                devices: vec![PathBuf::from("/dev/input/event-test")],
-            }
-        }
-
-        fn press(&mut self, shortcut: &str) {
-            self.pressed_keys = crate::input::shortcuts::parse_shortcut(shortcut).unwrap();
-        }
-
-        fn clear(&mut self) {
-            self.pressed_keys.clear();
-        }
-    }
-
-    impl InputEventSource for TestInputSource {
-        fn pressed_keys(&self) -> &HashSet<Key> {
-            &self.pressed_keys
-        }
-
-        fn device_count(&self) -> usize {
-            self.devices.len()
-        }
-
-        fn device_paths(&self) -> Vec<PathBuf> {
-            self.devices.clone()
-        }
-    }
-
-    fn shortcuts(press: Option<&str>, hold: Option<&str>) -> ShortcutsConfig {
-        ShortcutsConfig {
-            press: press.map(str::to_string),
-            hold: hold.map(str::to_string),
-        }
-    }
-
-    fn test_manager(
-        source: TestInputSource,
-        event_tx: mpsc::Sender<ShortcutEvent>,
-    ) -> InputManagerRuntime<TestInputSource> {
-        let (_command_tx, command_rx) = mpsc::unbounded_channel();
-        InputManagerRuntime::with_source(
-            shortcuts(None, Some("SUPER+ALT")),
-            event_tx,
-            command_rx,
-            source,
-        )
-        .unwrap()
-    }
-
-    #[tokio::test]
-    async fn source_key_state_starts_and_ends_hold_shortcut() {
-        let (event_tx, mut event_rx) = mpsc::channel(8);
-        let mut source = TestInputSource::new();
-        source.press("SUPER+ALT");
-        let mut manager = test_manager(source, event_tx);
-
-        assert!(
-            manager
-                .dispatch_source_events(vec![InputSourceEvent::KeyStateChanged { key_events: 2 }])
-                .await
-        );
-        let start = event_rx.recv().await.unwrap();
-        assert_eq!(start.kind, ShortcutKind::Hold);
-        assert_eq!(start.phase, ShortcutPhase::Start);
-
-        manager.source.clear();
-        assert!(
-            manager
-                .dispatch_source_events(vec![InputSourceEvent::KeyStateChanged { key_events: 1 }])
-                .await
-        );
-        let end = event_rx.recv().await.unwrap();
-        assert_eq!(end.kind, ShortcutKind::Hold);
-        assert_eq!(end.phase, ShortcutPhase::End);
-    }
-
-    #[tokio::test]
-    async fn source_device_change_releases_active_hold_without_key_event() {
-        let (event_tx, mut event_rx) = mpsc::channel(8);
-        let mut source = TestInputSource::new();
-        source.press("SUPER+ALT");
-        let mut manager = test_manager(source, event_tx);
-
-        manager
-            .dispatch_source_events(vec![InputSourceEvent::KeyStateChanged { key_events: 2 }])
-            .await;
-        let _ = event_rx.recv().await.unwrap();
-
-        manager.source.clear();
-        assert!(
-            manager
-                .dispatch_source_events(vec![InputSourceEvent::DeviceSetChanged])
-                .await
-        );
-
-        let end = event_rx.recv().await.unwrap();
-        assert_eq!(end.kind, ShortcutKind::Hold);
-        assert_eq!(end.phase, ShortcutPhase::Cancel);
-    }
-
-    #[tokio::test]
-    async fn source_backpressure_is_busy_but_does_not_reconcile_shortcuts() {
-        let (event_tx, mut event_rx) = mpsc::channel(8);
-        let source = TestInputSource::new();
-        let mut manager = test_manager(source, event_tx);
-
-        assert!(
-            manager
-                .dispatch_source_events(vec![InputSourceEvent::SourceBackpressure {
-                    key_events: MAX_KEY_EVENTS_PER_TICK,
-                }])
-                .await
-        );
-        assert!(event_rx.try_recv().is_err());
-    }
-}
+mod tests;
 
 #[derive(Debug, Clone)]
 pub struct InputSnapshot {
@@ -321,7 +192,7 @@ impl InputManagerRuntime<EvdevUdevEventSource> {
                     }
                 }
                 _ = evdev_tick.tick() => {
-                    let events = self.source.poll_key_events(MAX_KEY_EVENTS_PER_TICK)?;
+                    let events = self.source.poll_input_events(MAX_INPUT_EVENTS_PER_TICK)?;
                     busy = self.dispatch_source_events(events).await;
                 }
             }
@@ -404,11 +275,15 @@ impl<S: InputEventSource> InputManagerRuntime<S> {
                         .await;
                     busy = true;
                 }
-                InputSourceEvent::SourceBackpressure { key_events } => {
+                InputSourceEvent::SourceBackpressure {
+                    drained_events,
+                    key_events,
+                } => {
                     debug!(
+                        drained_events,
                         key_events,
-                        max_key_events_per_tick = MAX_KEY_EVENTS_PER_TICK,
-                        "Input source reached per-tick key event cap"
+                        max_input_events_per_tick = MAX_INPUT_EVENTS_PER_TICK,
+                        "Input source reached per-tick event cap"
                     );
                     busy = true;
                 }

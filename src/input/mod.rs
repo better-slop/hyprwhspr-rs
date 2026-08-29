@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod churn_tests;
 mod hyprland;
 pub mod injector;
 pub mod manager;

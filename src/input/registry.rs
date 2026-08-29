@@ -1,5 +1,5 @@
 use anyhow::Result;
-use evdev::{Device, InputEventKind, Key};
+use evdev::{Device, EventSummary, InputEvent, KeyCode};
 use std::collections::HashSet;
 use std::fs;
 use std::io;
@@ -10,11 +10,12 @@ use tracing::{debug, error, info, warn};
 
 pub(super) struct KeyboardRegistry {
     devices: Vec<KeyboardDevice>,
-    pressed_keys: HashSet<Key>,
+    pressed_keys: HashSet<KeyCode>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(super) struct PollOutcome {
+    pub drained_events: usize,
     pub key_events: usize,
     pub devices_changed: bool,
     pub backpressure: bool,
@@ -41,7 +42,7 @@ impl KeyboardRegistry {
         })
     }
 
-    pub(super) fn pressed_keys(&self) -> &HashSet<Key> {
+    pub(super) fn pressed_keys(&self) -> &HashSet<KeyCode> {
         &self.pressed_keys
     }
 
@@ -56,7 +57,7 @@ impl KeyboardRegistry {
             .collect()
     }
 
-    pub(super) fn poll_key_events(&mut self, max_events: usize) -> Result<PollOutcome> {
+    pub(super) fn poll_input_events(&mut self, max_events: usize) -> Result<PollOutcome> {
         let mut outcome = PollOutcome::default();
         let mut removed_devices = HashSet::new();
 
@@ -72,25 +73,10 @@ impl KeyboardRegistry {
 
             match entry.device.fetch_events() {
                 Ok(events) => {
-                    for event in events {
-                        if let InputEventKind::Key(key) = event.kind() {
-                            match event.value() {
-                                1 => {
-                                    self.pressed_keys.insert(key);
-                                    outcome.key_events += 1;
-                                }
-                                0 => {
-                                    self.pressed_keys.remove(&key);
-                                    outcome.key_events += 1;
-                                }
-                                _ => {}
-                            }
-                        }
-
-                        if outcome.key_events >= max_events {
-                            outcome.backpressure = true;
-                            return Ok(outcome);
-                        }
+                    if Self::drain_events(events, max_events, &mut self.pressed_keys, &mut outcome)
+                    {
+                        outcome.backpressure = true;
+                        break;
                     }
                 }
                 Err(err) => {
@@ -112,7 +98,76 @@ impl KeyboardRegistry {
             self.refresh()?;
         }
 
+        // Dropping FetchEventsSynced at the budget can discard the iterator's
+        // remaining compensation/frame state. Read the kernel's canonical key
+        // state before shortcut evaluation so partial batches cannot leave a
+        // key stuck pressed or released.
+        if outcome.backpressure {
+            self.reconcile_pressed_keys();
+        }
+
         Ok(outcome)
+    }
+
+    /// Drains one evdev batch without allowing synchronization events to
+    /// monopolize the input-manager thread.
+    ///
+    /// `evdev::Device::fetch_events` can synthesize non-key events while
+    /// recovering from `SYN_DROPPED`. Those events must consume the same budget
+    /// as real key events so udev refreshes and shortcut commands stay live.
+    fn drain_events(
+        events: impl IntoIterator<Item = InputEvent>,
+        max_events: usize,
+        pressed_keys: &mut HashSet<KeyCode>,
+        outcome: &mut PollOutcome,
+    ) -> bool {
+        debug_assert!(max_events > 0, "input event budget must be non-zero");
+
+        for event in events {
+            Self::apply_input_event(event, pressed_keys, outcome);
+            if outcome.drained_events >= max_events {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn apply_input_event(
+        event: InputEvent,
+        pressed_keys: &mut HashSet<KeyCode>,
+        outcome: &mut PollOutcome,
+    ) {
+        outcome.drained_events += 1;
+
+        match event.destructure() {
+            EventSummary::Key(_, key, 1) => {
+                pressed_keys.insert(key);
+                outcome.key_events += 1;
+            }
+            EventSummary::Key(_, key, 0) => {
+                pressed_keys.remove(&key);
+                outcome.key_events += 1;
+            }
+            _ => {}
+        }
+    }
+
+    fn reconcile_pressed_keys(&mut self) {
+        let mut pressed_keys = HashSet::new();
+
+        for entry in &self.devices {
+            match entry.device.get_key_state() {
+                Ok(keys) => pressed_keys.extend(keys.iter()),
+                Err(err) => debug!(
+                    path = ?entry.path,
+                    error = %err,
+                    "Failed to reconcile keyboard state after input backpressure"
+                ),
+            }
+        }
+
+        self.pressed_keys = pressed_keys;
     }
 
     pub(super) fn refresh(&mut self) -> Result<bool> {
@@ -185,7 +240,9 @@ pub fn list_available_keyboards() -> Result<Vec<(PathBuf, String)>> {
 
 fn is_keyboard_device(device: &Device) -> bool {
     device.supported_keys().is_some_and(|keys| {
-        keys.contains(Key::KEY_A) && keys.contains(Key::KEY_S) && keys.contains(Key::KEY_D)
+        keys.contains(KeyCode::KEY_A)
+            && keys.contains(KeyCode::KEY_S)
+            && keys.contains(KeyCode::KEY_D)
     })
 }
 
@@ -253,6 +310,7 @@ pub(super) fn is_input_event_node(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use evdev::{EventType, SwitchCode};
     use std::fs::File;
 
     fn temp_path(name: &str) -> PathBuf {
@@ -297,5 +355,25 @@ mod tests {
         fs::remove_file(&path).unwrap();
 
         assert!(is_device_node_stale(file.as_raw_fd(), &path));
+    }
+
+    #[test]
+    fn synthetic_non_key_stream_is_bounded() {
+        let mut pressed_keys = HashSet::new();
+        let mut outcome = PollOutcome::default();
+
+        let reached_budget = KeyboardRegistry::drain_events(
+            std::iter::repeat_with(|| {
+                InputEvent::new(EventType::SWITCH.0, SwitchCode::SW_LID.0, 1)
+            }),
+            256,
+            &mut pressed_keys,
+            &mut outcome,
+        );
+
+        assert!(reached_budget);
+        assert_eq!(outcome.drained_events, 256);
+        assert_eq!(outcome.key_events, 0);
+        assert!(pressed_keys.is_empty());
     }
 }
