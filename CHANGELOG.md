@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.3.33] (https://github.com/better-slop/hyprwhspr-rs/compare/v0.3.32...v0.3.33) - 2026-08-30
+
+### Chores
+- *(deps)* bump quinn-proto from 0.11.14 to 0.11.16 ([#150](https://github.com/better-slop/hyprwhspr-rs/pull/150))
+
+
+### Fixes
+- bound evdev resync after input churn ([#151](https://github.com/better-slop/hyprwhspr-rs/pull/151))
+
 ## [0.3.32] (https://github.com/better-slop/hyprwhspr-rs/compare/v0.3.31...v0.3.32) - 2026-06-26
 
 ### Fixes
