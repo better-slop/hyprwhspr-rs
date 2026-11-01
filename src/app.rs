@@ -1,213 +1,52 @@
-use anyhow::{Context, Result};
-use std::sync::Arc;
+//! Daemon activation host. Dictation behavior belongs to `session`; this module
+//! translates shortcuts/control requests and keeps the input registry informed.
+
+use anyhow::Result;
 use std::time::Instant;
-use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info, warn};
+use tokio::sync::mpsc;
+use tracing::{debug, error, info};
 
-use crate::audio::{
-    capture::RecordingSession, AudioCapture, AudioFeedback, CapturedAudio, FastVad, FastVadOutcome,
-};
-use crate::benchmark::BenchmarkRecorder;
-use crate::config::{Config, ConfigManager, ShortcutsConfig, TranscriptionProvider};
+use crate::config::{Config, ConfigManager, ShortcutsConfig};
 use crate::control::{ControlRequest, ControlServer, RecordCommand, RecorderState};
-use crate::input::{
-    DeliveryConfig, DeliveryIntent, InputManagerHandle, ShortcutEvent, ShortcutKind, ShortcutPhase,
-    TextInjector,
-};
-use crate::status::{StatusWriter, WaybarState};
-use crate::text::NormalizeTextService;
-use crate::transcription::{TranscriptionBackend, TranscriptionResult};
-use crate::whisper::WhisperVadOptions;
-
-fn resample_audio(samples: &[f32], src_rate: u32, dst_rate: u32) -> Vec<f32> {
-    if samples.is_empty() || src_rate == 0 || dst_rate == 0 {
-        return Vec::new();
-    }
-    if src_rate == dst_rate {
-        return samples.to_vec();
-    }
-
-    let src_len = samples.len();
-    if src_len == 0 {
-        return Vec::new();
-    }
-
-    let output_len = ((src_len as u64 * dst_rate as u64) + (src_rate as u64 / 2)) / src_rate as u64;
-    if output_len == 0 {
-        return Vec::new();
-    }
-
-    let mut output = Vec::with_capacity(output_len as usize);
-    let rate_ratio = src_rate as f64 / dst_rate as f64;
-    let last_index = src_len.saturating_sub(1);
-
-    for n in 0..output_len as usize {
-        let src_pos = n as f64 * rate_ratio;
-        let idx = src_pos.floor() as usize;
-        let frac = src_pos - idx as f64;
-        let left = samples[idx.min(last_index)];
-        let right = samples[(idx + 1).min(last_index)];
-        let value = left + (right - left) * frac as f32;
-        output.push(value);
-    }
-
-    output
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RecordingTrigger {
-    HoldShortcut,
-    PressShortcut,
-    ExternalCommand,
-}
-
-#[derive(Debug, Clone)]
-struct FastVadSummary {
-    dropped_samples: usize,
-    sample_rate: u32,
-}
-
-#[derive(Debug)]
-struct PreprocessedAudio {
-    audio: CapturedAudio,
-    report: Option<FastVadSummary>,
-}
-
-fn build_vad_options(config_manager: &ConfigManager, config: &Config) -> WhisperVadOptions {
-    let whisper_vad = &config.transcription.whisper_cpp.vad;
-    WhisperVadOptions {
-        enabled: whisper_vad.enabled,
-        model_path: config_manager.get_vad_model_path(config),
-        threshold: whisper_vad.threshold,
-        min_speech_ms: whisper_vad.min_speech_ms,
-        min_silence_ms: whisper_vad.min_silence_ms,
-        max_speech_s: whisper_vad.max_speech_s,
-        speech_pad_ms: whisper_vad.speech_pad_ms,
-        samples_overlap: whisper_vad.samples_overlap,
-    }
-}
-
-fn fast_vad_allowed(config: &Config) -> bool {
-    if !config.fast_vad.enabled {
-        return false;
-    }
-
-    if config.transcription.provider == TranscriptionProvider::WhisperCpp
-        && config.transcription.whisper_cpp.vad.enabled
-    {
-        return false;
-    }
-
-    true
-}
+use crate::input::{InputManagerHandle, ShortcutEvent, ShortcutKind, ShortcutPhase};
+use crate::session::{native::SessionFactory, Command, DictationSession, State, Trigger};
 
 pub struct HyprwhsprApp {
     config_manager: ConfigManager,
-    audio_capture: AudioCapture,
-    audio_feedback: AudioFeedback,
-    transcriber: TranscriptionBackend,
-    fast_vad: Option<FastVad>,
-    text_injector: Arc<Mutex<TextInjector>>,
-    text_normalizer: NormalizeTextService,
-    status_writer: StatusWriter,
+    factory: SessionFactory,
+    session: DictationSession,
+    current_config: Config,
+    pending_config: Option<Config>,
     shortcut_tx: mpsc::Sender<ShortcutEvent>,
     shortcut_rx: Option<mpsc::Receiver<ShortcutEvent>>,
     control_tx: mpsc::Sender<ControlRequest>,
     control_rx: Option<mpsc::Receiver<ControlRequest>>,
     input_manager: Option<InputManagerHandle>,
-    current_config: Config,
-    recording_session: Option<RecordingSession>,
-    recording_trigger: Option<RecordingTrigger>,
-    benchmark: Option<BenchmarkRecorder>,
-    is_processing: bool,
 }
 
 impl HyprwhsprApp {
     pub fn new(config_manager: ConfigManager) -> Result<Self> {
-        let config = config_manager.get();
-
-        let audio_capture =
-            AudioCapture::new(config.audio_device).context("Failed to initialize audio capture")?;
-
-        let assets_dir = config_manager.get_assets_dir();
-        let audio_feedback = AudioFeedback::new(
-            config.audio_feedback,
-            assets_dir,
-            config.start_sound_path.clone(),
-            config.stop_sound_path.clone(),
-            config.start_sound_volume,
-            config.stop_sound_volume,
-        );
-
-        let vad_options = build_vad_options(&config_manager, &config);
-
-        let transcriber = TranscriptionBackend::build(&config_manager, &config, vad_options)
-            .context("Failed to configure transcription backend")?;
-
-        transcriber
-            .initialize()
-            .context("Failed to initialize transcription backend")?;
-
-        info!(
-            "🎯 Active transcription backend: {}",
-            transcriber.provider().label()
-        );
-
-        let text_injector = TextInjector::new(DeliveryConfig::from(&config));
-        let text_normalizer = NormalizeTextService::new(config.word_overrides.clone());
-
-        let status_writer = StatusWriter::new()?;
-        status_writer.set_state(WaybarState::Inactive, "Ready")?;
-
+        let current_config = config_manager.get();
+        let mut factory = SessionFactory::default();
+        let session = factory.build(&config_manager, &current_config)?;
         let (shortcut_tx, shortcut_rx) = mpsc::channel(10);
         let (control_tx, control_rx) = mpsc::channel(10);
-
-        let fast_vad = if fast_vad_allowed(&config) {
-            FastVad::maybe_new(&config.fast_vad, audio_capture.sample_rate_hint())
-                .context("Failed to initialize fast VAD pipeline")?
-        } else {
-            if config.fast_vad.enabled
-                && config.transcription.provider == TranscriptionProvider::WhisperCpp
-                && config.transcription.whisper_cpp.vad.enabled
-            {
-                info!("⚡ Earshot fast VAD disabled because whisper-cli VAD is active");
-            }
-            None
-        };
-
-        if let Some(vad) = &fast_vad {
-            info!(
-                "⚡ Earshot fast VAD enabled (profile: {}, silence timeout: {} ms)",
-                vad.settings().base_profile,
-                config.fast_vad.silence_timeout_ms
-            );
-        }
-
         Ok(Self {
             config_manager,
-            audio_capture,
-            audio_feedback,
-            transcriber,
-            fast_vad,
-            text_injector: Arc::new(Mutex::new(text_injector)),
-            text_normalizer,
-            status_writer,
+            factory,
+            session,
+            current_config,
+            pending_config: None,
             shortcut_tx,
             shortcut_rx: Some(shortcut_rx),
             control_tx,
             control_rx: Some(control_rx),
             input_manager: None,
-            current_config: config,
-            recording_session: None,
-            recording_trigger: None,
-            benchmark: None,
-            is_processing: false,
         })
     }
 
     pub async fn run(&mut self) -> Result<()> {
         info!("🚀 hyprwhspr running!");
-
         let mut shortcut_rx = self
             .shortcut_rx
             .take()
@@ -219,51 +58,43 @@ impl HyprwhsprApp {
         let _control_server =
             ControlServer::spawn(self.control_tx.clone(), self.config_manager.subscribe())?;
         self.ensure_input_manager(self.current_config.shortcuts.clone())?;
-        self.log_shortcut_configuration(&self.current_config.shortcuts);
-
+        self.log_shortcuts(&self.current_config.shortcuts);
         let mut config_rx = self.config_manager.subscribe();
 
         loop {
             tokio::select! {
                 event = shortcut_rx.recv() => {
-                    match event {
-                        Some(event) => {
-                            if let Err(e) = self.handle_shortcut(event).await {
-                                error!("Error handling shortcut: {}", e);
-                            }
-                        }
-                        None => {
-                            info!("Shortcut channel closed");
-                            break;
-                        }
+                    let Some(event) = event else { break };
+                    if let Err(error) = self.handle_shortcut(event) {
+                        error!("Error handling shortcut: {error:#}");
                     }
                 }
                 request = control_rx.recv() => {
-                    match request {
-                        Some(request) => self.handle_control_request(request).await,
-                        None => {
-                            info!("Control channel closed");
-                            break;
-                        }
+                    let Some(request) = request else { break };
+                    self.handle_control_request(request).await;
+                }
+                completion = self.session.next_completion() => {
+                    if let Err(error) = self.session.finish_completion(completion).await {
+                        error!("Failed to process recording: {error:#}");
                     }
                 }
                 result = config_rx.changed() => {
-                    match result {
-                        Ok(()) => {
-                            let updated = config_rx.borrow().clone();
-                            if let Err(err) = self.apply_config_update(updated) {
-                                error!("Failed to apply config update: {}", err);
-                            }
-                        }
-                        Err(_) => {
-                            info!("Configuration watcher closed");
-                            break;
-                        }
+                    if result.is_err() { break; }
+                    let updated = config_rx.borrow().clone();
+                    if let Err(error) = self.apply_config_update(updated) {
+                        error!("Failed to apply config update: {error:#}");
+                    }
+                }
+            }
+            self.update_input_busy();
+            if self.session.state() == State::Inactive {
+                if let Some(config) = self.pending_config.take() {
+                    if let Err(error) = self.apply_config_update(config) {
+                        error!("Failed to apply deferred config update: {error:#}");
                     }
                 }
             }
         }
-
         Ok(())
     }
 
@@ -279,153 +110,53 @@ impl HyprwhsprApp {
         Ok(())
     }
 
-    fn set_input_app_busy(&self, app_busy: bool) {
+    fn update_input_busy(&self) {
         if let Some(manager) = &self.input_manager {
-            manager.set_app_busy(app_busy);
+            manager.set_app_busy(self.session.state() != State::Inactive);
         }
     }
 
-    fn apply_config_update(&mut self, new_config: Config) -> Result<()> {
-        tracing::debug!(?new_config, "Apply config update requested");
-        if new_config == self.current_config {
-            tracing::debug!("Config unchanged; ignoring update");
+    fn apply_config_update(&mut self, config: Config) -> Result<()> {
+        if config == self.current_config {
+            self.pending_config = None;
             return Ok(());
         }
-
-        if self.recording_session.is_some() || self.is_processing {
-            warn!("Skipping config refresh while busy");
+        if self.session.state() != State::Inactive {
+            self.pending_config = Some(config);
+            debug!("Deferring config refresh until dictation finishes");
             return Ok(());
         }
-
-        let assets_dir = self.config_manager.get_assets_dir();
-        let audio_feedback = AudioFeedback::new(
-            new_config.audio_feedback,
-            assets_dir,
-            new_config.start_sound_path.clone(),
-            new_config.stop_sound_path.clone(),
-            new_config.start_sound_volume,
-            new_config.stop_sound_volume,
-        );
-
-        let text_injector = TextInjector::new(DeliveryConfig::from(&new_config));
-        let text_normalizer = NormalizeTextService::new(new_config.word_overrides.clone());
-
-        let transcriber_changed =
-            TranscriptionBackend::needs_refresh(&self.current_config, &new_config);
-
-        if self.current_config.audio_device != new_config.audio_device {
-            self.audio_capture
-                .update_preferred_device(new_config.audio_device);
+        let session = self.factory.build(&self.config_manager, &config)?;
+        if config.shortcuts != self.current_config.shortcuts || self.input_manager.is_none() {
+            self.ensure_input_manager(config.shortcuts.clone())?;
+            self.log_shortcuts(&config.shortcuts);
         }
-
-        if transcriber_changed {
-            let vad_options = build_vad_options(&self.config_manager, &new_config);
-            let backend =
-                TranscriptionBackend::build(&self.config_manager, &new_config, vad_options)
-                    .context("Failed to reconfigure transcription backend")?;
-            backend
-                .initialize()
-                .context("Failed to initialize updated transcription backend")?;
-            info!(
-                "🎯 Active transcription backend: {}",
-                backend.provider().label()
-            );
-            self.transcriber = backend;
-        }
-
-        let shortcuts_changed =
-            new_config.shortcuts != self.current_config.shortcuts || self.input_manager.is_none();
-
-        if shortcuts_changed {
-            self.ensure_input_manager(new_config.shortcuts.clone())?;
-            self.log_shortcut_configuration(&new_config.shortcuts);
-        }
-
-        let fast_vad_was_allowed = fast_vad_allowed(&self.current_config);
-        let fast_vad_is_allowed = fast_vad_allowed(&new_config);
-
-        if !fast_vad_is_allowed {
-            let conflict_with_whisper = new_config.fast_vad.enabled
-                && new_config.transcription.provider == TranscriptionProvider::WhisperCpp
-                && new_config.transcription.whisper_cpp.vad.enabled;
-
-            if conflict_with_whisper {
-                info!("⚡ Earshot fast VAD disabled because whisper-cli VAD is active");
-            } else if self.fast_vad.is_some()
-                || (fast_vad_was_allowed && self.current_config.fast_vad.enabled)
-            {
-                info!("⚡ Earshot fast VAD disabled");
-            }
-
-            self.fast_vad = None;
-        } else if !fast_vad_was_allowed
-            || self.current_config.fast_vad != new_config.fast_vad
-            || self.fast_vad.is_none()
-        {
-            self.fast_vad =
-                FastVad::maybe_new(&new_config.fast_vad, self.audio_capture.sample_rate_hint())
-                    .context("Failed to refresh fast VAD pipeline")?;
-            if let Some(vad) = &self.fast_vad {
-                info!(
-                    "⚡ Earshot fast VAD enabled (profile: {}, silence timeout: {} ms)",
-                    vad.settings().base_profile,
-                    new_config.fast_vad.silence_timeout_ms
-                );
-            }
-        }
-
-        self.text_injector = Arc::new(Mutex::new(text_injector));
-        self.text_normalizer = text_normalizer;
-        self.audio_feedback = audio_feedback;
-        self.current_config = new_config;
-
+        self.session = session;
+        self.current_config = config;
         info!("Configuration updated");
-        tracing::debug!(?self.current_config, "Config state after update");
         Ok(())
     }
 
-    fn log_shortcut_configuration(&self, shortcuts: &ShortcutsConfig) {
-        match shortcuts.press.as_deref() {
-            Some(value) => info!("Press shortcut active: {}", value),
-            None => info!("Press shortcut disabled"),
-        }
-
-        match shortcuts.hold.as_deref() {
-            Some(value) => info!("Hold shortcut active: {}", value),
-            None => info!("Hold shortcut disabled"),
-        }
+    fn log_shortcuts(&self, shortcuts: &ShortcutsConfig) {
+        info!(
+            "Press shortcut: {}",
+            shortcuts.press.as_deref().unwrap_or("disabled")
+        );
+        info!(
+            "Hold shortcut: {}",
+            shortcuts.hold.as_deref().unwrap_or("disabled")
+        );
     }
 
-    async fn handle_shortcut(&mut self, event: ShortcutEvent) -> Result<()> {
-        match (event.kind, event.phase) {
-            (ShortcutKind::Press, ShortcutPhase::Start) => {
-                self.toggle_recording(RecordingTrigger::PressShortcut, event.triggered_at)
-                    .await?;
-            }
-            (ShortcutKind::Hold, ShortcutPhase::Start) => {
-                self.start_recording_if_idle(RecordingTrigger::HoldShortcut, event.triggered_at)
-                    .await?;
-            }
-            (ShortcutKind::Hold, ShortcutPhase::End) => {
-                if matches!(self.recording_trigger, Some(RecordingTrigger::HoldShortcut))
-                    && self.recording_session.is_some()
-                {
-                    self.stop_recording(event.triggered_at).await?;
-                } else {
-                    debug!("Hold release ignored (no active hold-triggered recording)");
-                }
-            }
-            (ShortcutKind::Hold, ShortcutPhase::Cancel) => {
-                if self.recording_session.is_some() {
-                    warn!("Input device changed while recording; stopping active recording");
-                    self.stop_recording(event.triggered_at).await?;
-                } else {
-                    debug!("Input device cancel ignored (no active recording)");
-                }
-            }
-            _ => {}
-        }
-
+    fn handle_shortcut(&mut self, event: ShortcutEvent) -> Result<()> {
+        let command = match (event.kind, event.phase) {
+            (ShortcutKind::Press, ShortcutPhase::Start) => Command::Toggle(Trigger::Press),
+            (ShortcutKind::Hold, ShortcutPhase::Start) => Command::Start(Trigger::Hold),
+            (ShortcutKind::Hold, ShortcutPhase::End) => Command::ReleaseHold,
+            (ShortcutKind::Hold, ShortcutPhase::Cancel) => Command::DeviceCancel,
+            _ => return Ok(()),
+        };
+        self.session.command(command, event.triggered_at)?;
         Ok(())
     }
 
@@ -434,20 +165,17 @@ impl HyprwhsprApp {
             ControlRequest::Record { command, reply_tx } => {
                 let result = self
                     .execute_record_command(command)
-                    .await
-                    .map_err(|err| format!("{err:#}"));
+                    .map_err(|error| format!("{error:#}"));
                 if reply_tx.send(result).is_err() {
                     debug!("Control client disconnected before receiving response");
                 }
             }
             ControlRequest::CopyText { text, reply_tx } => {
                 let result = self
-                    .text_injector
-                    .lock()
+                    .session
+                    .copy_text(&text)
                     .await
-                    .deliver(&text, DeliveryIntent::Copy)
-                    .await
-                    .map_err(|err| format!("{err:#}"));
+                    .map_err(|error| format!("{error:#}"));
                 if reply_tx.send(result).is_err() {
                     debug!("Copy client disconnected before receiving response");
                 }
@@ -455,386 +183,31 @@ impl HyprwhsprApp {
         }
     }
 
-    async fn execute_record_command(&mut self, command: RecordCommand) -> Result<RecorderState> {
-        let now = Instant::now();
-
-        match command {
-            RecordCommand::Start => {
-                self.start_recording_if_idle(RecordingTrigger::ExternalCommand, now)
-                    .await?;
-            }
-            RecordCommand::Stop => {
-                self.stop_recording_if_active(now).await?;
-            }
-            RecordCommand::Toggle => {
-                self.toggle_recording(RecordingTrigger::ExternalCommand, now)
-                    .await?;
-            }
-            RecordCommand::Status => {}
-        }
-
-        Ok(self.current_state())
-    }
-
-    fn current_state(&self) -> RecorderState {
-        if self.is_processing {
-            RecorderState::Processing
-        } else if self.recording_session.is_some() {
-            RecorderState::Recording
-        } else {
-            RecorderState::Inactive
-        }
-    }
-
-    async fn start_recording_if_idle(
-        &mut self,
-        trigger: RecordingTrigger,
-        triggered_at: Instant,
-    ) -> Result<()> {
-        if self.is_processing {
-            warn!("Still processing previous recording, ignoring start request");
-            return Ok(());
-        }
-
-        if self.recording_session.is_some() {
-            debug!("Start request ignored because recording is already active");
-            return Ok(());
-        }
-
-        self.start_recording(trigger, triggered_at).await
-    }
-
-    async fn stop_recording_if_active(&mut self, triggered_at: Instant) -> Result<()> {
-        if self.recording_session.is_some() {
-            self.stop_recording(triggered_at).await?;
-        } else {
-            debug!("Stop request ignored because recording is not active");
-        }
-
-        Ok(())
-    }
-
-    async fn toggle_recording(
-        &mut self,
-        trigger: RecordingTrigger,
-        triggered_at: Instant,
-    ) -> Result<()> {
-        if self.is_processing {
-            warn!("Still processing previous recording, ignoring toggle request");
-            return Ok(());
-        }
-
-        if self.recording_session.is_some() {
-            self.stop_recording(triggered_at).await?;
-        } else {
-            self.start_recording(trigger, triggered_at).await?;
-        }
-
-        Ok(())
-    }
-
-    async fn start_recording(
-        &mut self,
-        trigger: RecordingTrigger,
-        triggered_at: Instant,
-    ) -> Result<()> {
-        info!("🎤 Starting recording...");
-
-        self.audio_feedback.play_start_sound()?;
-
-        let session = self
-            .audio_capture
-            .start_recording()
-            .context("Failed to start recording")?;
-
-        self.recording_session = Some(session);
-        self.recording_trigger = Some(trigger);
-        self.set_input_app_busy(true);
-
-        let recording_started_at = Instant::now();
-        self.benchmark = Some(BenchmarkRecorder::new(
-            self.transcriber.provider().label().to_string(),
-            triggered_at,
-            recording_started_at,
-        ));
-
-        self.status_writer.set_recording(true)?;
-
-        Ok(())
-    }
-
-    async fn stop_recording(&mut self, triggered_at: Instant) -> Result<()> {
-        info!("🛑 Stopping recording...");
-
-        let session = self
-            .recording_session
-            .take()
-            .context("No active recording session")?;
-
-        if let Some(benchmark) = self.benchmark.as_mut() {
-            benchmark.mark_keybind_stop(triggered_at);
-        }
-
-        self.audio_feedback.play_stop_sound()?;
-
-        self.status_writer.set_processing()?;
-
-        let captured_audio = session.stop().context("Failed to stop recording")?;
-        let stop_timestamp = Instant::now();
-        self.recording_trigger = None;
-
-        if let Some(benchmark) = self.benchmark.as_mut() {
-            benchmark.mark_recording_stop(stop_timestamp);
-            benchmark.record_original_audio(captured_audio.len(), captured_audio.sample_rate);
-        }
-
-        if !captured_audio.is_empty() {
-            self.is_processing = true;
-            if let Err(e) = self.process_audio(captured_audio).await {
-                error!("❌ Error processing audio: {:#}", e);
-                self.status_writer
-                    .set_error(&format!("{:#}", e))
-                    .unwrap_or_else(|e| tracing::warn!("Failed to set error status: {}", e));
-                warn!("Failed to process recording. Check logs for details.");
-            }
-            self.benchmark = None;
-            self.is_processing = false;
-            self.set_input_app_busy(false);
-            // Return to inactive state after processing
-            self.status_writer
-                .set_state(WaybarState::Inactive, "Ready")
-                .unwrap_or_else(|e| tracing::warn!("Failed to set inactive status: {}", e));
-        } else {
-            warn!("No audio data captured");
-            self.benchmark = None;
-            self.set_input_app_busy(false);
-            self.status_writer
-                .set_state(WaybarState::Inactive, "Ready")
-                .unwrap_or_else(|e| tracing::warn!("Failed to set inactive status: {}", e));
-        }
-
-        Ok(())
-    }
-
-    fn preprocess_audio(&mut self, audio_data: CapturedAudio) -> Result<Option<PreprocessedAudio>> {
-        let CapturedAudio {
-            mut samples,
-            mut sample_rate,
-        } = audio_data;
-
-        if let Some(vad) = self.fast_vad.as_mut() {
-            if !FastVad::supports_sample_rate(sample_rate) {
-                warn!(
-                    "🎚️ Input sample rate {} Hz unsupported by fast VAD; resampling to 16 kHz",
-                    sample_rate
-                );
-                samples = resample_audio(&samples, sample_rate, 16_000);
-                sample_rate = 16_000;
-            }
-
-            if vad.sample_rate_hz() != sample_rate {
-                vad.set_sample_rate(sample_rate)
-                    .context("Failed to configure fast VAD sample rate")?;
-            }
-
-            let outcome = vad.trim(&samples).context("Fast VAD trimming failed")?;
-            if outcome.trimmed_audio.is_empty() {
-                info!(
-                    "🎧 Recording contained only silence after fast VAD trimming; skipping transcription"
-                );
-                return Ok(None);
-            }
-
-            let FastVadOutcome {
-                trimmed_audio,
-                segments,
-                profile_switches,
-                final_profile,
-                dropped_samples,
-                ..
-            } = outcome;
-
-            let trimmed_len = trimmed_audio.len();
-
-            debug!(
-                "Earshot fast VAD kept {}/{} samples across {} segments (profile={}, switches={}, dropped={})",
-                trimmed_len,
-                samples.len(),
-                segments,
-                final_profile,
-                profile_switches,
-                dropped_samples
-            );
-
-            return Ok(Some(PreprocessedAudio {
-                audio: CapturedAudio {
-                    samples: trimmed_audio,
-                    sample_rate,
-                },
-                report: Some(FastVadSummary {
-                    dropped_samples,
-                    sample_rate,
-                }),
-            }));
-        }
-
-        Ok(Some(PreprocessedAudio {
-            audio: CapturedAudio {
-                samples,
-                sample_rate,
-            },
-            report: None,
-        }))
-    }
-
-    async fn process_audio(&mut self, audio_data: CapturedAudio) -> Result<()> {
-        if let Some(benchmark) = self.benchmark.as_mut() {
-            benchmark.mark_processing_start(Instant::now());
-        }
-
-        let preprocess_start = Instant::now();
-        let maybe_audio = self.preprocess_audio(audio_data)?;
-        let preprocess_duration = preprocess_start.elapsed();
-
-        if let Some(benchmark) = self.benchmark.as_mut() {
-            benchmark.record_preprocess_duration(preprocess_duration);
-        }
-
-        let Some(preprocessed) = maybe_audio else {
-            if let Some(mut benchmark) = self.benchmark.take() {
-                benchmark.mark_injection_skipped(Instant::now());
-                if let Some(summary) = benchmark.finalize() {
-                    info!(message = %format_args!("\n{}", summary));
-                }
-            }
-            return Ok(());
+    fn execute_record_command(&mut self, command: RecordCommand) -> Result<RecorderState> {
+        let command = match command {
+            RecordCommand::Start => Some(Command::Start(Trigger::External)),
+            RecordCommand::Stop => Some(Command::Stop),
+            RecordCommand::Toggle => Some(Command::Toggle(Trigger::External)),
+            RecordCommand::Status => None,
         };
-
-        if preprocessed.audio.is_empty() {
-            info!("🎧 No audio remaining after preprocessing; skipping transcription");
-            if let Some(mut benchmark) = self.benchmark.take() {
-                benchmark.mark_injection_skipped(Instant::now());
-                if let Some(summary) = benchmark.finalize() {
-                    info!(message = %format_args!("\n{}", summary));
-                }
-            }
-            return Ok(());
+        if let Some(command) = command {
+            self.session.command(command, Instant::now())?;
         }
-
-        let PreprocessedAudio { audio, report } = preprocessed;
-        let trimmed_rate = report
-            .as_ref()
-            .map(|summary| summary.sample_rate)
-            .unwrap_or(audio.sample_rate);
-        let dropped_samples = report.as_ref().map(|summary| summary.dropped_samples);
-
-        if let Some(benchmark) = self.benchmark.as_mut() {
-            benchmark.record_trimmed_audio(audio.len(), trimmed_rate, dropped_samples);
-        }
-
-        let CapturedAudio {
-            samples,
-            sample_rate,
-        } = audio;
-
-        let audio_for_transcription = if sample_rate == 16_000 {
-            samples
-        } else {
-            debug!(
-                "Resampling processed audio from {} Hz to 16 kHz for transcription backend",
-                sample_rate
-            );
-            resample_audio(&samples, sample_rate, 16_000)
-        };
-
-        if let Some(benchmark) = self.benchmark.as_mut() {
-            benchmark.record_audio_sent(audio_for_transcription.len(), 16_000);
-        }
-
-        let TranscriptionResult { text, metrics } =
-            self.transcriber.transcribe(audio_for_transcription).await?;
-
-        if let Some(benchmark) = self.benchmark.as_mut() {
-            benchmark.record_backend_metrics(metrics);
-        }
-
-        if text.trim().is_empty() {
-            warn!("Empty transcription, nothing to inject");
-            if let Some(mut benchmark) = self.benchmark.take() {
-                benchmark.mark_injection_skipped(Instant::now());
-                if let Some(summary) = benchmark.finalize() {
-                    info!(message = %format_args!("\n{}", summary));
-                }
-            }
-            return Ok(());
-        }
-
-        info!("📝 Transcription: \"{}\"", text);
-        let normalized_text = self.text_normalizer.normalize(&text);
-
-        if normalized_text.is_empty() {
-            warn!("Transcription became empty after text normalization");
-            if let Some(mut benchmark) = self.benchmark.take() {
-                benchmark.mark_injection_skipped(Instant::now());
-                if let Some(summary) = benchmark.finalize() {
-                    info!(message = %format_args!("\n{}", summary));
-                }
-            }
-            return Ok(());
-        }
-
-        debug!("📝 Normalized transcription: \"{}\"", normalized_text);
-
-        // Save to history for Walker/Elephant integration
-        if let Err(e) = self.status_writer.save_transcription(&normalized_text) {
-            tracing::warn!("Failed to save transcription to history: {}", e);
-        }
-
-        let text_injector = Arc::clone(&self.text_injector);
-        let mut injector = text_injector.lock().await;
-
-        let injection_start = Instant::now();
-        if let Some(benchmark) = self.benchmark.as_mut() {
-            benchmark.mark_injection_start(injection_start);
-        }
-
-        debug!("⌨️  Injecting text into active application...");
-        injector
-            .deliver(
-                &normalized_text,
-                self.current_config.dictation_delivery_intent(),
-            )
-            .await?;
-
-        let injection_end = Instant::now();
-        if let Some(benchmark) = self.benchmark.as_mut() {
-            benchmark.mark_injection_end(injection_end);
-        }
-
-        if let Some(benchmark) = self.benchmark.take() {
-            if let Some(summary) = benchmark.finalize() {
-                info!(message = %format_args!("\n{}", summary));
-            }
-        }
-
-        Ok(())
+        Ok(match self.session.state() {
+            State::Inactive => RecorderState::Inactive,
+            State::Recording => RecorderState::Recording,
+            State::Processing => RecorderState::Processing,
+        })
     }
 
     pub async fn cleanup(&mut self) -> Result<()> {
-        info!("🧹 Cleaning up...");
-
-        if self.recording_session.is_some() {
-            self.recording_session = None;
-        }
-        self.status_writer.cleanup()?;
-
-        if let Some(manager) = &mut self.input_manager {
+        let result = self.session.cleanup();
+        // Before joining activation, close any receiver still owned by the app.
+        // run() owns its receiver locally and drops it when returning/cancelled.
+        self.shortcut_rx.take();
+        if let Some(mut manager) = self.input_manager.take() {
             manager.stop();
         }
-        self.input_manager = None;
-        self.recording_trigger = None;
-
-        info!("✅ Cleanup completed");
-        Ok(())
+        result
     }
 }

@@ -9,6 +9,7 @@ pub mod input;
 pub mod install;
 pub mod logging;
 pub mod paths;
+pub mod session;
 pub mod status;
 pub mod text;
 pub mod transcription;
