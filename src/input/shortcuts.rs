@@ -5,32 +5,7 @@ use std::time::{Duration, Instant};
 
 use crate::config::ShortcutsConfig;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ShortcutKind {
-    Hold,
-    Press,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ShortcutPhase {
-    Start,
-    End,
-    Cancel,
-}
-
-#[derive(Debug, Clone)]
-pub struct ShortcutEvent {
-    pub triggered_at: Instant,
-    pub kind: ShortcutKind,
-    pub phase: ShortcutPhase,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ShortcutSummary {
-    pub kind: ShortcutKind,
-    pub name: String,
-    pub active: bool,
-}
+use super::activation::{ShortcutEvent, ShortcutKind, ShortcutPhase, ShortcutSummary};
 
 pub(super) enum ShortcutInput<'a> {
     KeyStateChanged {
@@ -180,7 +155,7 @@ impl ShortcutController {
         events
     }
 
-    fn cancel_holds(&mut self, now: Instant) -> Vec<ShortcutEvent> {
+    pub(super) fn cancel_holds(&mut self, now: Instant) -> Vec<ShortcutEvent> {
         let mut events = Vec::new();
 
         for binding in &mut self.bindings {

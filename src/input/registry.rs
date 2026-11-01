@@ -50,6 +50,7 @@ impl KeyboardRegistry {
         self.devices.len()
     }
 
+    #[cfg(test)]
     pub(super) fn device_paths(&self) -> Vec<PathBuf> {
         self.devices
             .iter()

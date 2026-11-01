@@ -17,8 +17,6 @@ pub struct HyprwhsprApp {
     session: DictationSession,
     current_config: Config,
     pending_config: Option<Config>,
-    shortcut_tx: mpsc::Sender<ShortcutEvent>,
-    shortcut_rx: Option<mpsc::Receiver<ShortcutEvent>>,
     control_tx: mpsc::Sender<ControlRequest>,
     control_rx: Option<mpsc::Receiver<ControlRequest>>,
     input_manager: Option<InputManagerHandle>,
@@ -29,7 +27,6 @@ impl HyprwhsprApp {
         let current_config = config_manager.get();
         let mut factory = SessionFactory::default();
         let session = factory.build(&config_manager, &current_config)?;
-        let (shortcut_tx, shortcut_rx) = mpsc::channel(10);
         let (control_tx, control_rx) = mpsc::channel(10);
         Ok(Self {
             config_manager,
@@ -37,8 +34,6 @@ impl HyprwhsprApp {
             session,
             current_config,
             pending_config: None,
-            shortcut_tx,
-            shortcut_rx: Some(shortcut_rx),
             control_tx,
             control_rx: Some(control_rx),
             input_manager: None,
@@ -47,10 +42,6 @@ impl HyprwhsprApp {
 
     pub async fn run(&mut self) -> Result<()> {
         info!("🚀 hyprwhspr running!");
-        let mut shortcut_rx = self
-            .shortcut_rx
-            .take()
-            .expect("shortcut receiver already consumed");
         let mut control_rx = self
             .control_rx
             .take()
@@ -63,8 +54,11 @@ impl HyprwhsprApp {
 
         loop {
             tokio::select! {
-                event = shortcut_rx.recv() => {
-                    let Some(event) = event else { break };
+                event = self.input_manager.as_mut().expect("input manager initialized").next_event() => {
+                    let Some(event) = event else {
+                        let health = self.input_manager.as_ref().expect("input manager initialized").snapshot().health;
+                        anyhow::bail!("Keyboard activation stopped: {health:?}");
+                    };
                     if let Err(error) = self.handle_shortcut(event) {
                         error!("Error handling shortcut: {error:#}");
                     }
@@ -102,10 +96,7 @@ impl HyprwhsprApp {
         if let Some(manager) = &self.input_manager {
             manager.update_shortcuts(shortcuts)?;
         } else {
-            self.input_manager = Some(InputManagerHandle::spawn(
-                shortcuts,
-                self.shortcut_tx.clone(),
-            )?);
+            self.input_manager = Some(InputManagerHandle::spawn(shortcuts)?);
         }
         Ok(())
     }
@@ -202,9 +193,8 @@ impl HyprwhsprApp {
 
     pub async fn cleanup(&mut self) -> Result<()> {
         let result = self.session.cleanup();
-        // Before joining activation, close any receiver still owned by the app.
-        // run() owns its receiver locally and drops it when returning/cancelled.
-        self.shortcut_rx.take();
+        // The activation handle owns its queue and closes it before joining.
+        // No receiver-draining order is required from this host.
         if let Some(mut manager) = self.input_manager.take() {
             manager.stop();
         }
