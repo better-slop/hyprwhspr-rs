@@ -371,6 +371,12 @@ after publication acknowledgement. History text remains on stdin, never in shell
 arguments. Start the daemon first; history-copy errors do not trigger a second
 clipboard backend or an automatic retry.
 
+Before acknowledgement or paste input, delivery waits up to one second for the
+exact UTF-8 text to be readable from regular selection. Readback proves visible
+contents, not ownership or a clipboard generation. Payload reads are bounded by
+the expected text length plus one byte. A timed-out native protocol call can
+finish later; an uncertain publication never triggers insertion or automatic retry.
+
 </details>
 
 <details>

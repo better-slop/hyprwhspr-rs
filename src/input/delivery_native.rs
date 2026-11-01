@@ -6,8 +6,10 @@ use crate::input::hyprland::HyprlandDispatcher;
 use crate::input::paste_route::{PasteRoute, PasteShortcut};
 use anyhow::{bail, Context, Result};
 use std::env;
-use wl_clipboard_rs::copy::{ClipboardType, MimeType, Options, Source};
 use wrtype::{KeymapBuilder, Modifier, WrtypeClient};
+
+#[path = "delivery_clipboard.rs"]
+mod clipboard;
 
 type PreparedPaste = Box<dyn FnOnce() -> Result<()> + Send>;
 
@@ -109,20 +111,7 @@ impl DeliveryEffects for NativeEffects {
             if !self.wayland {
                 bail!("Clipboard delivery requires Wayland data-control support");
             }
-            let text = text.as_bytes().to_vec();
-            // Options::copy keeps its owner thread alive until clipboard takeover.
-            // The daemon stays alive after acknowledging CLI history-copy requests.
-            // Use regular selection only: copying should not alter primary selection.
-            tokio::task::spawn_blocking(move || {
-                let mut options = Options::new();
-                options.clipboard(ClipboardType::Regular);
-                options
-                    .copy(Source::Bytes(text.into_boxed_slice()), MimeType::Text)
-                    .context("Cannot publish text to Wayland clipboard")
-            })
-            .await
-            .context("Clipboard publisher task failed")??;
-            Ok(())
+            clipboard::publish(text).await
         })
     }
 

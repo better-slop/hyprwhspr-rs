@@ -19,6 +19,10 @@ struct ControlledEffects {
     class: String,
     fail: Option<&'static str>,
     validations: usize,
+    copy_gate: Option<(
+        tokio::sync::oneshot::Sender<()>,
+        tokio::sync::oneshot::Receiver<()>,
+    )>,
 }
 
 impl ControlledEffects {
@@ -68,7 +72,16 @@ impl DeliveryEffects for ControlledEffects {
     }
     fn publish_clipboard<'a>(&'a mut self, text: &'a str) -> EffectFuture<'a, ()> {
         self.record(Event::Copy(text.into()));
-        Box::pin(async { self.check("copy") })
+        let gate = self.copy_gate.take();
+        Box::pin(async move {
+            if let Some((started, visible)) = gate {
+                let _ = started.send(());
+                visible
+                    .await
+                    .context("controlled clipboard readiness deadline exceeded")?;
+            }
+            self.check("copy")
+        })
     }
     fn insert<'a>(&'a mut self, insertion: Insertion, text: &'a str) -> EffectFuture<'a, ()> {
         self.record(Event::Insert(insertion, text.into()));
@@ -94,6 +107,7 @@ fn controlled(
         class: "browser".into(),
         fail,
         validations: 0,
+        copy_gate: None,
     };
     (
         TextInjector::with_effects(config, Box::new(effects)),
@@ -187,6 +201,7 @@ async fn unsupported_paste_has_no_side_effects() {
         class: "browser".into(),
         fail: None,
         validations: 0,
+        copy_gate: None,
     };
     let mut delivery = TextInjector::with_effects(DeliveryConfig::default(), Box::new(effects));
     let error = delivery
@@ -290,4 +305,53 @@ async fn normalized_application_hint_selects_exact_shortcut() {
         .contains(&Event::Prepare(Insertion::Paste(PasteRoute::Hyprland(
             PasteShortcut::ShiftInsert
         )))));
+}
+
+#[tokio::test]
+async fn copy_and_paste_wait_for_visibility_and_do_not_insert_after_readiness_failure() {
+    for (intent, confirm) in [
+        (DeliveryIntent::Copy, false),
+        (DeliveryIntent::Copy, true),
+        (DeliveryIntent::Paste, false),
+        (DeliveryIntent::Paste, true),
+    ] {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (visible_tx, visible_rx) = tokio::sync::oneshot::channel();
+        let effects = ControlledEffects {
+            events: events.clone(),
+            capabilities: Capabilities {
+                hyprland: true,
+                wayland: true,
+            },
+            class: "browser".into(),
+            fail: None,
+            validations: 0,
+            copy_gate: Some((started_tx, visible_rx)),
+        };
+        let mut delivery = TextInjector::with_effects(DeliveryConfig::default(), Box::new(effects));
+        let task = tokio::spawn(async move { delivery.deliver("hello", intent).await });
+        started_rx.await.unwrap();
+        assert!(!task.is_finished());
+        assert!(!events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| matches!(event, Event::Insert(..))));
+        if confirm {
+            visible_tx.send(()).unwrap();
+        } else {
+            drop(visible_tx);
+        }
+        assert_eq!(task.await.unwrap().is_ok(), confirm);
+        assert_eq!(
+            events
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|event| matches!(event, Event::Insert(..)))
+                .count(),
+            usize::from(confirm && intent == DeliveryIntent::Paste)
+        );
+    }
 }
