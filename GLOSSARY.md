@@ -21,9 +21,10 @@ recording command are different ways to activate dictation.
 **Delivery**:
 The intentional handoff of a transcript to the clipboard or an editing target.
 
-**Delivery mode**:
-The user's choice of copy, typing, or paste for completed transcripts.
-_Avoid_: Auto-copy as a name for choosing how text is inserted.
+**Delivery intent**:
+An internal request to copy, type, or paste. Dictation keeps the released
+`auto_copy_clipboard` setting: true means paste, false means typing. Explicit
+history-copy actions request copy independently of that setting.
 
 **Copy**:
 Place a transcript on the clipboard without inserting it into another application.

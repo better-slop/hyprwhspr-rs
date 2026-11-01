@@ -799,7 +799,10 @@ impl HyprwhsprApp {
 
         debug!("⌨️  Injecting text into active application...");
         injector
-            .deliver(&normalized_text, self.current_config.delivery_mode)
+            .deliver(
+                &normalized_text,
+                self.current_config.dictation_delivery_intent(),
+            )
             .await?;
 
         let injection_end = Instant::now();

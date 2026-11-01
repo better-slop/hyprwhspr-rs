@@ -2,34 +2,59 @@ use hyprwhspr_rs::input::DeliveryIntent;
 use hyprwhspr_rs::Config;
 
 #[test]
-fn delivery_intent_is_explicit_and_defaults_to_paste() {
-    assert_eq!(Config::default().delivery_mode, DeliveryIntent::Paste);
-    for (mode, expected) in [
-        ("type", DeliveryIntent::Type),
-        ("paste", DeliveryIntent::Paste),
-        ("copy", DeliveryIntent::Copy),
-    ] {
+fn released_clipboard_option_accepts_both_boolean_values() {
+    for value in [false, true] {
         let config: Config =
-            serde_json::from_value(serde_json::json!({"delivery_mode": mode})).unwrap();
-        assert_eq!(config.delivery_mode, expected);
+            serde_json::from_value(serde_json::json!({"auto_copy_clipboard": value}))
+                .expect("released clipboard option must load without migration");
+        assert_eq!(config.auto_copy_clipboard, value);
+        assert_eq!(
+            config.dictation_delivery_intent(),
+            if value {
+                DeliveryIntent::Paste
+            } else {
+                DeliveryIntent::Type
+            }
+        );
+        let serialized = serde_json::to_value(config).unwrap();
+        assert_eq!(serialized["auto_copy_clipboard"], value);
     }
-    assert!(serde_json::from_str::<Config>(r#"{"delivery_mode":"restore"}"#).is_err());
+    assert!(
+        serde_json::from_value::<Config>(serde_json::json!({"auto_copy_clipboard": "false"}))
+            .is_err()
+    );
 }
 
 #[test]
-fn removed_clipboard_option_requires_explicit_migration() {
-    for value in [false, true] {
-        let error =
-            serde_json::from_value::<Config>(serde_json::json!({"auto_copy_clipboard": value}))
-                .unwrap_err();
-        let message = error.to_string();
-        assert!(message.contains("auto_copy_clipboard was removed"));
-        assert!(message.contains("delivery_mode"));
+fn default_config_preserves_released_clipboard_option() {
+    for config in [
+        Config::default(),
+        serde_json::from_str::<Config>("{}").unwrap(),
+    ] {
+        assert_eq!(config.dictation_delivery_intent(), DeliveryIntent::Paste);
+        let serialized = serde_json::to_value(config).unwrap();
+        assert_eq!(serialized["auto_copy_clipboard"], true);
+        assert!(serialized.get("delivery_mode").is_none());
     }
     assert!(serde_json::from_str::<Config>(
-        r#"{"$schema":"https://example.test/schema.json","delivery_mode":"type"}"#
+        r#"{"$schema":"https://example.test/schema.json","auto_copy_clipboard":false}"#
     )
     .is_ok());
+}
+
+#[test]
+fn generated_schema_preserves_released_clipboard_option() {
+    let schema: serde_json::Value =
+        serde_json::from_str(&hyprwhspr_rs::config::generated_schema_json().unwrap()).unwrap();
+    assert_eq!(
+        schema.pointer("/properties/auto_copy_clipboard/type"),
+        Some(&serde_json::json!("boolean"))
+    );
+    assert_eq!(
+        schema.pointer("/properties/auto_copy_clipboard/default"),
+        Some(&serde_json::json!(true))
+    );
+    assert!(schema.pointer("/properties/delivery_mode").is_none());
 }
 
 #[test]

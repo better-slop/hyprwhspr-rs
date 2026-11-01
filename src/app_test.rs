@@ -341,7 +341,10 @@ impl HyprwhsprAppTest {
 
         info!("⌨️  Injecting text into active application...");
         injector
-            .deliver(&normalized_text, self.current_config.delivery_mode)
+            .deliver(
+                &normalized_text,
+                self.current_config.dictation_delivery_intent(),
+            )
             .await?;
         info!("✅ Text injected successfully!");
 

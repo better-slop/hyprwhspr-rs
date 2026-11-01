@@ -224,7 +224,7 @@ bind = ALT, SPACE, exec, hyprwhspr-rs record toggle
   "stop_sound_volume": 0.1, // 0.1 - 1.0
   "start_sound_path": null, // Optional custom audio asset overrides
   "stop_sound_path": null, // Optional custom audio asset overrides
-  "delivery_mode": "paste", // paste | type | copy; explicit output intent
+  "auto_copy_clipboard": true, // true: copy and paste; false: type directly without touching the clipboard
   "shift_paste": false, // Whether to force shift paste
   "global_paste_shortcut": false, // Enable compositor-level paste; uses Hyprland sendshortcut with Shift+Insert for all pastes
   "paste_hints": {
@@ -340,23 +340,23 @@ bind = ALT, SPACE, exec, hyprwhspr-rs record toggle
 }
 ```
 
-`delivery_mode` selects transcription output:
+`auto_copy_clipboard` keeps its existing dictation behavior:
 
-| Mode | Behavior | Clipboard |
+| Setting | Behavior | Clipboard |
 | --- | --- | --- |
-| `paste` (default) | Publish text, then send the selected paste shortcut | Retains text in regular selection |
-| `type` | Type Unicode text through the Wayland virtual keyboard | Never accessed |
-| `copy` | Publish text without sending input | Retains text in regular selection |
+| `true` (default) | Publish text, then send the selected paste shortcut | Retains text in regular selection |
+| `false` | Type Unicode text through the Wayland virtual keyboard | Never accessed |
 
-Replace the removed `auto_copy_clipboard: false` with `delivery_mode: "type"`;
-replace `true` with `delivery_mode: "paste"`. Configurations containing the old
-option fail with a migration message rather than silently changing behavior.
+Existing configurations need no changes. Clipboard-only actions, including
+Walker/Elephant history-copy, explicitly copy text without sending input and
+work independently of this dictation setting.
 
-Paste hints (`shift_paste`, `global_paste_shortcut`, `paste_hints`) apply only to
-`paste`. Delivery selects Hyprland IPC when present, otherwise a Wayland virtual
-keyboard; unavailable capabilities and failed dispatches report errors. A failed
-dispatch may have inserted some or all text and is never retried through another
-route. Direct typing preserves Unicode and sends newline/tab as Return/Tab.
+Paste hints (`shift_paste`, `global_paste_shortcut`, `paste_hints`) apply only when
+`auto_copy_clipboard` is `true`. Delivery selects Hyprland IPC when present,
+otherwise a Wayland virtual keyboard. Unavailable capabilities and failed
+dispatches report errors. A failed dispatch may have inserted some or all text
+and is never retried through another route. Direct typing preserves Unicode and
+sends newline/tab as Return/Tab.
 
 Copy/paste require Wayland data-control support. Primary selection is unchanged.
 The daemon serves its clipboard text until another owner replaces it or the

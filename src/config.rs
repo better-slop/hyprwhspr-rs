@@ -84,21 +84,10 @@ pub struct Config {
     #[serde(default)]
     pub stop_sound_path: Option<String>,
 
-    /// Explicit transcription output: paste (retains clipboard text), type
-    /// (never accesses clipboard), or copy (clipboard only, no insertion).
-    #[serde(default)]
-    pub delivery_mode: DeliveryIntent,
-
-    // Reject the removed option instead of silently changing an existing
-    // clipboard-preserving configuration into the default paste behavior.
-    #[serde(
-        rename = "auto_copy_clipboard",
-        default,
-        skip_serializing,
-        deserialize_with = "reject_auto_copy_clipboard"
-    )]
-    #[schemars(skip)]
-    removed_auto_copy_clipboard: (),
+    /// Copy and paste transcriptions when true. When false, type directly through
+    /// the Wayland virtual keyboard protocol without accessing the clipboard.
+    #[serde(default = "default_auto_copy_clipboard")]
+    pub auto_copy_clipboard: bool,
 
     #[serde(default = "default_shift_paste")]
     pub shift_paste: bool,
@@ -171,11 +160,8 @@ fn default_volume() -> f32 {
     0.3
 }
 
-fn reject_auto_copy_clipboard<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> std::result::Result<(), D::Error> {
-    let _ = serde::de::IgnoredAny::deserialize(deserializer)?;
-    Err(serde::de::Error::custom("auto_copy_clipboard was removed; replace false with delivery_mode: \"type\" or true with delivery_mode: \"paste\""))
+fn default_auto_copy_clipboard() -> bool {
+    true
 }
 
 fn default_shift_paste() -> bool {
@@ -832,8 +818,7 @@ impl Default for Config {
             stop_sound_volume: default_volume(),
             start_sound_path: None,
             stop_sound_path: None,
-            delivery_mode: DeliveryIntent::default(),
-            removed_auto_copy_clipboard: (),
+            auto_copy_clipboard: default_auto_copy_clipboard(),
             shift_paste: default_shift_paste(),
             global_paste_shortcut: false,
             paste_hints: PasteHintsConfig::default(),
@@ -855,6 +840,17 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Preserve the released dictation behavior at one policy boundary:
+    /// auto-copy means copy-and-paste; opting out means clipboard-free typing.
+    /// Explicit history-copy actions request `DeliveryIntent::Copy` separately.
+    pub fn dictation_delivery_intent(&self) -> DeliveryIntent {
+        if self.auto_copy_clipboard {
+            DeliveryIntent::Paste
+        } else {
+            DeliveryIntent::Type
+        }
+    }
+
     pub fn normalize_shortcuts(&mut self) {
         let default_primary = default_primary_shortcut();
         let legacy_primary = Self::sanitize_shortcut(&self.primary_shortcut);

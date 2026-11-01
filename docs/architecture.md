@@ -13,12 +13,17 @@ One delivery module owns the choice and ordering of clipboard writes and native
 input. Dictation and explicit history-copy actions use the same implementation.
 Text normalization happens before delivery and remains independently reusable.
 
+The public `auto_copy_clipboard` option keeps its released behavior and defaults:
+true selects copy-and-paste; false selects clipboard-free typing. One config
+helper maps that setting to internal delivery intent. Explicit history-copy
+requests use copy intent independently; no configuration migration is required.
+
 - Copy changes the clipboard without sending an insertion event.
 - Typing sends text without accessing the clipboard.
 - Paste writes the transcript to the clipboard and sends the selected paste
   shortcut. Copy and paste retain the transcript on the clipboard.
 - A missing native capability is an error, not permission to change delivery
-  mode. Select a usable adapter before side effects.
+  intent. Select a usable adapter before side effects.
 - A failure after possible insertion must not trigger another insertion attempt.
   The target may already contain some text.
 

@@ -16,10 +16,10 @@
       "type": "boolean",
       "default": false
     },
-    "delivery_mode": {
-      "description": "Explicit transcription output: paste (retains clipboard text), type\n(never accesses clipboard), or copy (clipboard only, no insertion).",
-      "$ref": "#/$defs/DeliveryIntent",
-      "default": "paste"
+    "auto_copy_clipboard": {
+      "description": "Copy and paste transcriptions when true. When false, type directly through\nthe Wayland virtual keyboard protocol without accessing the clipboard.",
+      "type": "boolean",
+      "default": true
     },
     "fallback_cli": {
       "type": [
@@ -276,15 +276,6 @@
       "type": "string",
       "enum": [
         "openai_audio_transcriptions"
-      ]
-    },
-    "DeliveryIntent": {
-      "description": "Explicit output intent. Typing never reads or writes the clipboard.",
-      "type": "string",
-      "enum": [
-        "copy",
-        "type",
-        "paste"
       ]
     },
     "FastVadConfig": {
