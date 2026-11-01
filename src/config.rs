@@ -83,6 +83,8 @@ pub struct Config {
     #[serde(default)]
     pub stop_sound_path: Option<String>,
 
+    /// Copy and paste transcriptions when true. When false, type directly through
+    /// the Wayland virtual keyboard protocol without accessing the clipboard.
     #[serde(default = "default_auto_copy_clipboard")]
     pub auto_copy_clipboard: bool,
 
