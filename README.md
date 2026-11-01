@@ -224,7 +224,7 @@ bind = ALT, SPACE, exec, hyprwhspr-rs record toggle
   "stop_sound_volume": 0.1, // 0.1 - 1.0
   "start_sound_path": null, // Optional custom audio asset overrides
   "stop_sound_path": null, // Optional custom audio asset overrides
-  "auto_copy_clipboard": true, // Automatically copy the final transcription to the clipboard
+  "auto_copy_clipboard": true, // true: copy and paste; false: type directly without touching the clipboard
   "shift_paste": false, // Whether to force shift paste
   "global_paste_shortcut": false, // Enable compositor-level paste; uses Hyprland sendshortcut with Shift+Insert for all pastes
   "paste_hints": {
@@ -339,6 +339,11 @@ bind = ALT, SPACE, exec, hyprwhspr-rs record toggle
   },
 }
 ```
+
+Set `auto_copy_clipboard` to `false` to type each character directly and preserve the clipboard.
+This requires a Wayland compositor supporting the virtual keyboard protocol (including Hyprland).
+Paste settings (`shift_paste`, `global_paste_shortcut`, and `paste_hints`) apply only when this option is `true`.
+Direct typing sends newline and tab characters as Return and Tab key presses; unavailable virtual keyboards report an error.
 
 </details>
 

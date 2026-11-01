@@ -8,12 +8,13 @@ use wrtype::{Modifier, WrtypeClient};
 
 use crate::input::hyprland::HyprlandDispatcher;
 use crate::input::paste_route::{
-    PasteRoute, PasteRouteContext, PasteShortcut, class_paste_hint_for_class,
-    normalize_hint_classes, plan_paste_routes,
+    class_paste_hint_for_class, normalize_hint_classes, plan_paste_routes, PasteRoute,
+    PasteRouteContext, PasteShortcut,
 };
 
 pub struct TextInjector {
-    clipboard: Clipboard,
+    // Only paste mode owns a clipboard connection; direct typing never accesses it.
+    clipboard: Option<Clipboard>,
     extra_shift_classes: Vec<String>,
     extra_shift_insert_classes: Vec<String>,
     default_shift_paste: bool,
@@ -31,9 +32,13 @@ impl TextInjector {
         global_paste_shortcut: bool,
         extra_shift_classes: Vec<String>,
         extra_shift_insert_classes: Vec<String>,
-        _auto_copy_clipboard: bool,
+        auto_copy_clipboard: bool,
     ) -> Result<Self> {
-        let clipboard = Clipboard::new().context("Failed to initialize clipboard")?;
+        let clipboard = if auto_copy_clipboard {
+            Some(Clipboard::new().context("Failed to initialize clipboard")?)
+        } else {
+            None
+        };
 
         let wayland_env = env::var("WAYLAND_DISPLAY").is_ok();
         let hyprland_dispatcher = HyprlandDispatcher::new();
@@ -68,11 +73,16 @@ impl TextInjector {
 
         info!("Injecting text: {} characters", text.len());
 
-        // Copy to clipboard using available backends
-        self.copy_processed_text(text)?;
+        if self.clipboard.is_some() {
+            self.copy_processed_text(text)?;
+        }
 
         // Small delay to ensure window focus is ready for input (especially on Wayland/XWayland)
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+        if self.clipboard.is_none() {
+            return self.type_processed_text(text);
+        }
 
         let class_hint = self.active_class_paste_hint().await;
         let routes = plan_paste_routes(PasteRouteContext {
@@ -91,6 +101,28 @@ impl TextInjector {
         }
 
         Ok(())
+    }
+
+    fn type_processed_text(&mut self, text: &str) -> Result<()> {
+        // wrtype emits per-character virtual keyboard events, including Unicode:
+        // https://docs.rs/wrtype/0.1.0/wrtype/struct.WrtypeClient.html#method.type_text
+        // Never paste or retry after failure: some characters may already be typed.
+        let result = match self.ensure_wrtype_client() {
+            Some(client) => client
+                .type_text(text)
+                .context("Failed to type text via Wayland virtual keyboard"),
+            None => Err(anyhow::anyhow!(
+                "Direct typing requires a Wayland compositor supporting the virtual keyboard protocol"
+            )),
+        };
+
+        if result.is_err() {
+            // Permit a fresh connection for the next transcription.
+            self.invalidate_wrtype_client();
+        } else {
+            info!("✅ Text injected via Wayland virtual keyboard typing");
+        }
+        result
     }
 
     async fn active_class_paste_hint(&self) -> Option<PasteShortcut> {
@@ -157,6 +189,8 @@ impl TextInjector {
         }
 
         self.clipboard
+            .as_mut()
+            .context("Clipboard is disabled in direct typing mode")?
             .set_text(text)
             .context("Failed to copy text to clipboard")?;
         debug!("Text copied to clipboard");
@@ -321,4 +355,49 @@ fn send_virtual_keyboard_paste(client: &mut WrtypeClient, use_shift: bool) -> Re
 fn send_virtual_keyboard_global_paste(client: &mut WrtypeClient) -> Result<()> {
     // Universal paste: Shift+Insert works in most applications including terminals
     client.send_shortcut(&[Modifier::Shift], "Insert")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn direct_typing_injector() -> TextInjector {
+        // Paste options must not override the explicit clipboard opt-out.
+        TextInjector::new(true, true, vec!["kitty".into()], vec!["zed".into()], false)
+            .expect("direct typing must initialize without a clipboard connection")
+    }
+
+    #[test]
+    fn direct_typing_initializes_without_clipboard() {
+        let injector = direct_typing_injector();
+        assert!(injector.clipboard.is_none());
+        assert!(injector.wrtype_client.is_none());
+        assert!(!injector.wrtype_attempted);
+    }
+
+    #[tokio::test]
+    async fn direct_typing_ignores_whitespace_without_connecting() {
+        let mut injector = direct_typing_injector();
+        injector
+            .inject_text(" \n\t ")
+            .await
+            .expect("empty transcript");
+        assert!(injector.wrtype_client.is_none());
+        assert!(!injector.wrtype_attempted);
+    }
+
+    #[tokio::test]
+    async fn direct_typing_reports_unavailable_keyboard_instead_of_pasting() {
+        let mut injector = direct_typing_injector();
+        // Simulate an unsupported session without mutating process-wide env vars.
+        injector.wayland_env = false;
+        let error = injector
+            .inject_text("Hello, café — 世界!\nNext\tline")
+            .await
+            .expect_err("direct typing must fail when virtual keyboards are unavailable");
+        assert!(error.to_string().contains("Direct typing requires"));
+        assert!(injector.clipboard.is_none());
+        assert!(injector.wrtype_client.is_none());
+        assert!(!injector.wrtype_attempted);
+    }
 }

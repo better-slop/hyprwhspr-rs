@@ -17,6 +17,7 @@
       "default": false
     },
     "auto_copy_clipboard": {
+      "description": "Copy and paste transcriptions when true. When false, type directly through\nthe Wayland virtual keyboard protocol without accessing the clipboard.",
       "type": "boolean",
       "default": true
     },
