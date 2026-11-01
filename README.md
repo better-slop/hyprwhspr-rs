@@ -224,15 +224,17 @@ bind = ALT, SPACE, exec, hyprwhspr-rs record toggle
   "stop_sound_volume": 0.1, // 0.1 - 1.0
   "start_sound_path": null, // Optional custom audio asset overrides
   "stop_sound_path": null, // Optional custom audio asset overrides
-  "auto_copy_clipboard": true, // true: copy and paste; false: type directly without touching the clipboard
-  "shift_paste": false, // Whether to force shift paste
-  "global_paste_shortcut": false, // Enable compositor-level paste; uses Hyprland sendshortcut with Shift+Insert for all pastes
+  // Clipboard delivery needs Wayland data-control; direct typing needs virtual-keyboard support.
+  "auto_copy_clipboard": true, // true: copy/paste; false: type without clipboard (newlines/tabs send Return/Tab)
+  "max_copy_text_bytes": 1048576, // Maximum UTF-8 stdin size for `hyprwhspr-rs copy`; enforced by the daemon too
+  "shift_paste": false, // Ctrl+Shift+V instead of Ctrl+V; applies only when auto_copy_clipboard is true
+  "global_paste_shortcut": false, // Shift+Insert for all pastes; publishes to regular and primary selections
   "paste_hints": {
     "shift": [
       // List of window classes that will always paste with Ctrl+Shift+V
     ],
     "shift_insert": [
-      // List of window classes that will always paste with Shift+Insert
+      // Window classes that use Shift+Insert; publishes to regular and primary selections
     ],
   },
   "audio_device": null, // Force a specific input device index (null uses system default)
@@ -340,42 +342,8 @@ bind = ALT, SPACE, exec, hyprwhspr-rs record toggle
 }
 ```
 
-`auto_copy_clipboard` keeps its existing dictation behavior:
-
-| Setting | Behavior | Clipboard |
-| --- | --- | --- |
-| `true` (default) | Publish text, then send the selected paste shortcut | Retains text in regular selection |
-| `false` | Type Unicode text through the Wayland virtual keyboard | Never accessed |
-
-Existing configurations need no changes. Clipboard-only actions, including
-Walker/Elephant history-copy, explicitly copy text without sending input and
-work independently of this dictation setting.
-
-Paste hints (`shift_paste`, `global_paste_shortcut`, `paste_hints`) apply only when
-`auto_copy_clipboard` is `true`. Delivery selects Hyprland IPC when present,
-otherwise a Wayland virtual keyboard. Unavailable capabilities and failed
-dispatches report errors. A failed dispatch may have inserted some or all text
-and is never retried through another route. Direct typing preserves Unicode and
-sends newline/tab as Return/Tab.
-
-Copy/paste require Wayland data-control support. Primary selection is unchanged.
-The daemon serves its clipboard text until another owner replaces it or the
-daemon exits. Clipboard restoration is unsupported: text-only snapshots cannot
-preserve rich formats or safely identify a newer selection. On Hyprland, delivery
-rechecks focused-window identity before dispatch; focus can still change after
-that check. Other Wayland compositors provide no target-identity check here.
-
-Walker/Elephant history uses `hyprwhspr-rs copy`. It reads UTF-8 stdin (up to
-1 MiB), requests clipboard-only delivery from the running daemon, and exits
-after publication acknowledgement. History text remains on stdin, never in shell
-arguments. Start the daemon first; history-copy errors do not trigger a second
-clipboard backend or an automatic retry.
-
-Before acknowledgement or paste input, delivery waits up to one second for the
-exact UTF-8 text to be readable from regular selection. Readback proves visible
-contents, not ownership or a clipboard generation. Payload reads are bounded by
-the expected text length plus one byte. A timed-out native protocol call can
-finish later; an uncertain publication never triggers insertion or automatic retry.
+Walker/Elephant history uses `hyprwhspr-rs copy`: UTF-8 stdin goes to the running
+daemon, which keeps clipboard ownership after the command exits.
 
 </details>
 
@@ -484,6 +452,10 @@ All other fields in the `fast_vad` block map directly to the trimmer’s behavio
 recompiling.
 
 </details>
+
+## Inspiration
+
+Inspired by [Hex](https://github.com/anomalyco/hex)'s native typing and clipboard handling.
 
 ## Development
 
