@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+## [0.3.34] (https://github.com/better-slop/hyprwhspr-rs/compare/v0.3.33...v0.3.34) - 2026-11-01
+
+### Fixes
+- honor clipboard opt-out with direct typing ([#154](https://github.com/better-slop/hyprwhspr-rs/pull/154))
+
+
+### Other
+- use locked dependency sources for API checks ([#157](https://github.com/better-slop/hyprwhspr-rs/pull/157))
+- install native dependencies for release PR checks ([#155](https://github.com/better-slop/hyprwhspr-rs/pull/155))
+
 ## [0.3.33] (https://github.com/better-slop/hyprwhspr-rs/compare/v0.3.32...v0.3.33) - 2026-08-30
 
 ### Chores
