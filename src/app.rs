@@ -10,7 +10,10 @@ use crate::audio::{
 use crate::benchmark::BenchmarkRecorder;
 use crate::config::{Config, ConfigManager, ShortcutsConfig, TranscriptionProvider};
 use crate::control::{ControlRequest, ControlServer, RecordCommand, RecorderState};
-use crate::input::{InputManagerHandle, ShortcutEvent, ShortcutKind, ShortcutPhase, TextInjector};
+use crate::input::{
+    DeliveryConfig, DeliveryIntent, InputManagerHandle, ShortcutEvent, ShortcutKind, ShortcutPhase,
+    TextInjector,
+};
 use crate::status::{StatusWriter, WaybarState};
 use crate::text::NormalizeTextService;
 use crate::transcription::{TranscriptionBackend, TranscriptionResult};
@@ -150,13 +153,7 @@ impl HyprwhsprApp {
             transcriber.provider().label()
         );
 
-        let text_injector = TextInjector::new(
-            config.shift_paste,
-            config.global_paste_shortcut,
-            config.paste_hints.shift.clone(),
-            config.paste_hints.shift_insert.clone(),
-            config.auto_copy_clipboard,
-        )?;
+        let text_injector = TextInjector::new(DeliveryConfig::from(&config));
         let text_normalizer = NormalizeTextService::new(config.word_overrides.clone());
 
         let status_writer = StatusWriter::new()?;
@@ -309,13 +306,7 @@ impl HyprwhsprApp {
             new_config.stop_sound_volume,
         );
 
-        let text_injector = TextInjector::new(
-            new_config.shift_paste,
-            new_config.global_paste_shortcut,
-            new_config.paste_hints.shift.clone(),
-            new_config.paste_hints.shift_insert.clone(),
-            new_config.auto_copy_clipboard,
-        )?;
+        let text_injector = TextInjector::new(DeliveryConfig::from(&new_config));
         let text_normalizer = NormalizeTextService::new(new_config.word_overrides.clone());
 
         let transcriber_changed =
@@ -438,13 +429,28 @@ impl HyprwhsprApp {
     }
 
     async fn handle_control_request(&mut self, request: ControlRequest) {
-        let result = self
-            .execute_record_command(request.command)
-            .await
-            .map_err(|err| format!("{err:#}"));
-
-        if request.reply_tx.send(result).is_err() {
-            debug!("Control client disconnected before receiving response");
+        match request {
+            ControlRequest::Record { command, reply_tx } => {
+                let result = self
+                    .execute_record_command(command)
+                    .await
+                    .map_err(|err| format!("{err:#}"));
+                if reply_tx.send(result).is_err() {
+                    debug!("Control client disconnected before receiving response");
+                }
+            }
+            ControlRequest::CopyText { text, reply_tx } => {
+                let result = self
+                    .text_injector
+                    .lock()
+                    .await
+                    .deliver(&text, DeliveryIntent::Copy)
+                    .await
+                    .map_err(|err| format!("{err:#}"));
+                if reply_tx.send(result).is_err() {
+                    debug!("Copy client disconnected before receiving response");
+                }
+            }
         }
     }
 
@@ -792,7 +798,9 @@ impl HyprwhsprApp {
         }
 
         debug!("⌨️  Injecting text into active application...");
-        injector.inject_text(&normalized_text).await?;
+        injector
+            .deliver(&normalized_text, self.current_config.delivery_mode)
+            .await?;
 
         let injection_end = Instant::now();
         if let Some(benchmark) = self.benchmark.as_mut() {

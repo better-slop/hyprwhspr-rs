@@ -1,3 +1,4 @@
+use crate::input::DeliveryIntent;
 use crate::paths::expand_tilde;
 use crate::transcription::DEFAULT_PROMPT;
 use anyhow::{anyhow, Context, Result};
@@ -83,10 +84,21 @@ pub struct Config {
     #[serde(default)]
     pub stop_sound_path: Option<String>,
 
-    /// Copy and paste transcriptions when true. When false, type directly through
-    /// the Wayland virtual keyboard protocol without accessing the clipboard.
-    #[serde(default = "default_auto_copy_clipboard")]
-    pub auto_copy_clipboard: bool,
+    /// Explicit transcription output: paste (retains clipboard text), type
+    /// (never accesses clipboard), or copy (clipboard only, no insertion).
+    #[serde(default)]
+    pub delivery_mode: DeliveryIntent,
+
+    // Reject the removed option instead of silently changing an existing
+    // clipboard-preserving configuration into the default paste behavior.
+    #[serde(
+        rename = "auto_copy_clipboard",
+        default,
+        skip_serializing,
+        deserialize_with = "reject_auto_copy_clipboard"
+    )]
+    #[schemars(skip)]
+    removed_auto_copy_clipboard: (),
 
     #[serde(default = "default_shift_paste")]
     pub shift_paste: bool,
@@ -159,8 +171,11 @@ fn default_volume() -> f32 {
     0.3
 }
 
-fn default_auto_copy_clipboard() -> bool {
-    true
+fn reject_auto_copy_clipboard<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<(), D::Error> {
+    let _ = serde::de::IgnoredAny::deserialize(deserializer)?;
+    Err(serde::de::Error::custom("auto_copy_clipboard was removed; replace false with delivery_mode: \"type\" or true with delivery_mode: \"paste\""))
 }
 
 fn default_shift_paste() -> bool {
@@ -817,7 +832,8 @@ impl Default for Config {
             stop_sound_volume: default_volume(),
             start_sound_path: None,
             stop_sound_path: None,
-            auto_copy_clipboard: default_auto_copy_clipboard(),
+            delivery_mode: DeliveryIntent::default(),
+            removed_auto_copy_clipboard: (),
             shift_paste: default_shift_paste(),
             global_paste_shortcut: false,
             paste_hints: PasteHintsConfig::default(),

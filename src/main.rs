@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use clap::Parser;
 use hyprwhspr_rs::{
     cli::{Cli, Command, RecordAction},
@@ -30,6 +30,22 @@ async fn main() -> Result<()> {
                 let state = send_record_command(command).await?;
                 println!("{state}");
                 return Ok(());
+            }
+            Command::Copy => {
+                use hyprwhspr_rs::control::{send_copy_text, MAX_COPY_TEXT_BYTES};
+                use tokio::io::AsyncReadExt;
+                let mut bytes = Vec::new();
+                tokio::io::stdin()
+                    .take((MAX_COPY_TEXT_BYTES + 1) as u64)
+                    .read_to_end(&mut bytes)
+                    .await
+                    .context("Cannot read copy text from stdin")?;
+                if bytes.len() > MAX_COPY_TEXT_BYTES {
+                    bail!("Copy text exceeds 1 MiB limit");
+                }
+                let text =
+                    String::from_utf8(bytes).context("Copy stdin must contain valid UTF-8")?;
+                return send_copy_text(&text).await;
             }
         }
     }

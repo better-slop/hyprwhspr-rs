@@ -8,7 +8,7 @@ mod registry;
 pub mod shortcuts;
 mod source;
 
-pub use injector::TextInjector;
+pub use injector::{DeliveryConfig, DeliveryIntent, TextInjector};
 pub use manager::{InputManagerHandle, InputSnapshot, InputStats};
 pub use registry::list_available_keyboards;
 pub use shortcuts::{ShortcutEvent, ShortcutKind, ShortcutPhase};

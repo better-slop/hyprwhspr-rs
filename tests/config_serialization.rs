@@ -1,4 +1,36 @@
+use hyprwhspr_rs::input::DeliveryIntent;
 use hyprwhspr_rs::Config;
+
+#[test]
+fn delivery_intent_is_explicit_and_defaults_to_paste() {
+    assert_eq!(Config::default().delivery_mode, DeliveryIntent::Paste);
+    for (mode, expected) in [
+        ("type", DeliveryIntent::Type),
+        ("paste", DeliveryIntent::Paste),
+        ("copy", DeliveryIntent::Copy),
+    ] {
+        let config: Config =
+            serde_json::from_value(serde_json::json!({"delivery_mode": mode})).unwrap();
+        assert_eq!(config.delivery_mode, expected);
+    }
+    assert!(serde_json::from_str::<Config>(r#"{"delivery_mode":"restore"}"#).is_err());
+}
+
+#[test]
+fn removed_clipboard_option_requires_explicit_migration() {
+    for value in [false, true] {
+        let error =
+            serde_json::from_value::<Config>(serde_json::json!({"auto_copy_clipboard": value}))
+                .unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("auto_copy_clipboard was removed"));
+        assert!(message.contains("delivery_mode"));
+    }
+    assert!(serde_json::from_str::<Config>(
+        r#"{"$schema":"https://example.test/schema.json","delivery_mode":"type"}"#
+    )
+    .is_ok());
+}
 
 #[test]
 fn checked_in_schema_is_current() {

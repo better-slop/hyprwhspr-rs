@@ -1,403 +1,182 @@
-use anyhow::{Context, Result};
-use arboard::Clipboard;
-use enigo::{Keyboard, Settings};
-use std::env;
-use tracing::{debug, info, warn};
-use wl_clipboard_rs::copy::{ClipboardType, Error as WlCopyError, MimeType, Options, Source};
-use wrtype::{Modifier, WrtypeClient};
+//! Delivery policy: effect order, focus checks, and the no-retry boundary.
+//! Native connections and clipboard serving are hidden behind an internal seam.
 
-use crate::input::hyprland::HyprlandDispatcher;
-use crate::input::paste_route::{
-    class_paste_hint_for_class, normalize_hint_classes, plan_paste_routes, PasteRoute,
-    PasteRouteContext, PasteShortcut,
+use anyhow::{anyhow, Context, Result};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use std::{future::Future, pin::Pin};
+
+use super::paste_route::{
+    class_paste_hint_for_class, normalize_hint_classes, plan_paste_route, PasteRoute,
+    PasteRouteContext,
 };
+use crate::config::Config;
 
+#[path = "delivery_native.rs"]
+mod native;
+#[cfg(test)]
+#[path = "delivery_tests.rs"]
+mod tests;
+
+/// Explicit output intent. Typing never reads or writes the clipboard.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DeliveryIntent {
+    Copy,
+    Type,
+    #[default]
+    Paste,
+}
+
+/// Paste policy shared by production and interactive delivery. Output intent is
+/// a per-operation argument, independent of whether the clipboard retains text.
+#[derive(Debug, Clone, Default)]
+pub struct DeliveryConfig {
+    pub shift_paste: bool,
+    pub global_paste_shortcut: bool,
+    pub shift_classes: Vec<String>,
+    pub shift_insert_classes: Vec<String>,
+}
+
+impl From<&Config> for DeliveryConfig {
+    fn from(config: &Config) -> Self {
+        Self {
+            shift_paste: config.shift_paste,
+            global_paste_shortcut: config.global_paste_shortcut,
+            shift_classes: config.paste_hints.shift.clone(),
+            shift_insert_classes: config.paste_hints.shift_insert.clone(),
+        }
+    }
+}
+
+/// Owns native delivery resources, including the clipboard serving lifetime.
+/// Copy and paste replace the regular clipboard with text and retain it while
+/// this process runs. Restoration is unsupported: a text snapshot cannot
+/// preserve rich formats or establish ownership of a newer selection.
 pub struct TextInjector {
-    // Only paste mode owns a clipboard connection; direct typing never accesses it.
-    clipboard: Option<Clipboard>,
-    extra_shift_classes: Vec<String>,
-    extra_shift_insert_classes: Vec<String>,
-    default_shift_paste: bool,
-    global_paste_shortcut: bool,
-    hyprland_dispatcher: Option<HyprlandDispatcher>,
-    wrtype_client: Option<WrtypeClient>,
-    wrtype_attempted: bool,
-    wayland_env: bool,
-    wayland_clipboard_enabled: bool,
+    config: DeliveryConfig,
+    effects: Box<dyn DeliveryEffects>,
 }
 
 impl TextInjector {
-    pub fn new(
-        shift_paste_default: bool,
-        global_paste_shortcut: bool,
-        extra_shift_classes: Vec<String>,
-        extra_shift_insert_classes: Vec<String>,
-        auto_copy_clipboard: bool,
-    ) -> Result<Self> {
-        let clipboard = if auto_copy_clipboard {
-            Some(Clipboard::new().context("Failed to initialize clipboard")?)
-        } else {
-            None
-        };
-
-        let wayland_env = env::var("WAYLAND_DISPLAY").is_ok();
-        let hyprland_dispatcher = HyprlandDispatcher::new();
-
-        if hyprland_dispatcher.is_some() {
-            debug!("Hyprland IPC detected; enabling sendshortcut paste integration");
-        } else if wayland_env {
-            debug!(
-                "Wayland session detected without Hyprland IPC; virtual keyboard fallback will be used"
-            );
-        }
-
-        Ok(Self {
-            clipboard,
-            extra_shift_classes: normalize_hint_classes(extra_shift_classes),
-            extra_shift_insert_classes: normalize_hint_classes(extra_shift_insert_classes),
-            default_shift_paste: shift_paste_default,
-            global_paste_shortcut,
-            hyprland_dispatcher,
-            wrtype_client: None,
-            wrtype_attempted: false,
-            wayland_env,
-            wayland_clipboard_enabled: wayland_env,
-        })
+    /// Construction has no desktop effects. Acquire the requested capabilities
+    /// during delivery, before any clipboard write or key event.
+    pub fn new(config: DeliveryConfig) -> Self {
+        Self::with_effects(config, Box::new(native::NativeEffects::new()))
     }
 
-    pub async fn inject_text(&mut self, text: &str) -> Result<()> {
-        if text.trim().is_empty() {
-            debug!("No text to inject (empty or whitespace)");
-            return Ok(());
-        }
-
-        info!("Injecting text: {} characters", text.len());
-
-        if self.clipboard.is_some() {
-            self.copy_processed_text(text)?;
-        }
-
-        // Small delay to ensure window focus is ready for input (especially on Wayland/XWayland)
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-
-        if self.clipboard.is_none() {
-            return self.type_processed_text(text);
-        }
-
-        let class_hint = self.active_class_paste_hint().await;
-        let routes = plan_paste_routes(PasteRouteContext {
-            global_paste_shortcut: self.global_paste_shortcut,
-            default_shift_paste: self.default_shift_paste,
-            class_hint,
-            hyprland_available: self.hyprland_dispatcher.is_some(),
-            wayland_env: self.wayland_env,
-        });
-
-        for route in routes {
-            match self.try_paste_route(route).await {
-                Ok(()) => return Ok(()),
-                Err(err) => warn!(route = ?route, "Paste route failed: {err:?}"),
-            }
-        }
-
-        Ok(())
+    fn with_effects(mut config: DeliveryConfig, effects: Box<dyn DeliveryEffects>) -> Self {
+        config.shift_classes = normalize_hint_classes(config.shift_classes);
+        config.shift_insert_classes = normalize_hint_classes(config.shift_insert_classes);
+        Self { config, effects }
     }
 
-    fn type_processed_text(&mut self, text: &str) -> Result<()> {
-        // wrtype emits per-character virtual keyboard events, including Unicode:
-        // https://docs.rs/wrtype/0.1.0/wrtype/struct.WrtypeClient.html#method.type_text
-        // Never paste or retry after failure: some characters may already be typed.
-        let result = match self.ensure_wrtype_client() {
-            Some(client) => client
-                .type_text(text)
-                .context("Failed to type text via Wayland virtual keyboard"),
-            None => Err(anyhow::anyhow!(
-                "Direct typing requires a Wayland compositor supporting the virtual keyboard protocol"
-            )),
-        };
-
-        if result.is_err() {
-            // Permit a fresh connection for the next transcription.
-            self.invalidate_wrtype_client();
-        } else {
-            info!("✅ Text injected via Wayland virtual keyboard typing");
+    /// Deliver already-normalized text. An insertion error means the target may
+    /// have received some or all text; callers must not retry that operation.
+    /// Preserve Unicode, whitespace, newline and tab characters unchanged.
+    pub async fn deliver(&mut self, text: &str, intent: DeliveryIntent) -> Result<()> {
+        if intent == DeliveryIntent::Copy {
+            return self.effects.publish_clipboard(text).await;
         }
-        result
-    }
-
-    async fn active_class_paste_hint(&self) -> Option<PasteShortcut> {
-        if self.global_paste_shortcut {
-            return None;
-        }
-        let mut class_hint = None;
-        if let Some(dispatcher) = self.hyprland_dispatcher.as_ref() {
-            match dispatcher.active_window_class().await {
-                Ok(class_opt) => {
-                    if let Some(class) = class_opt {
-                        if let Some(shortcut) = class_paste_hint_for_class(
-                            &class,
-                            &self.extra_shift_classes,
-                            &self.extra_shift_insert_classes,
-                        ) {
-                            debug!(
-                                class = class.as_str(),
-                                shortcut = shortcut.as_str(),
-                                "Hyprland active window classification"
-                            );
-                            class_hint = Some(shortcut);
-                        } else {
-                            debug!(
-                                class = class.as_str(),
-                                default = self.default_shift_paste,
-                                "Hyprland active window classification has no explicit paste rule"
-                            );
-                        }
-                    }
-                }
-                Err(err) => {
-                    warn!("Failed to query Hyprland active window class: {err:?}");
-                }
-            }
-        }
-
-        class_hint
-    }
-
-    async fn try_paste_route(&mut self, route: PasteRoute) -> Result<()> {
-        match route {
-            PasteRoute::Hyprland(shortcut) => self.try_hyprland_paste(shortcut).await,
-            PasteRoute::VirtualKeyboard(shortcut) => self.try_virtual_keyboard_paste(shortcut),
-            PasteRoute::Enigo(shortcut) => self.try_enigo_paste(shortcut),
-        }
-    }
-
-    fn copy_processed_text(&mut self, text: &str) -> Result<()> {
         if text.is_empty() {
             return Ok(());
         }
 
-        if self.wayland_clipboard_enabled {
-            match self.copy_wayland_clipboard(text) {
-                Ok(_) => {
-                    debug!("Text copied to Wayland clipboard");
-                }
-                Err(err) => {
-                    warn!("Wayland clipboard copy failed (falling back to arboard): {err:?}");
-                    self.wayland_clipboard_enabled = false;
-                }
-            }
-        }
-
-        self.clipboard
-            .as_mut()
-            .context("Clipboard is disabled in direct typing mode")?
-            .set_text(text)
-            .context("Failed to copy text to clipboard")?;
-        debug!("Text copied to clipboard");
-        Ok(())
-    }
-
-    async fn try_hyprland_paste(&mut self, shortcut: PasteShortcut) -> Result<()> {
-        if let Some(dispatcher) = self.hyprland_dispatcher.as_ref() {
-            debug!(shortcut = shortcut.as_str(), "Hyprland paste route attempt");
-            match shortcut {
-                PasteShortcut::CtrlV => dispatcher.send_paste_shortcut(false).await?,
-                PasteShortcut::CtrlShiftV => dispatcher.send_paste_shortcut(true).await?,
-                PasteShortcut::ShiftInsert => dispatcher.send_global_paste_shortcut().await?,
-            };
-            info!("✅ Text injected via Hyprland paste route");
-            return Ok(());
-        }
-
-        Err(anyhow::anyhow!("Hyprland paste route unavailable"))
-    }
-
-    fn try_virtual_keyboard_paste(&mut self, shortcut: PasteShortcut) -> Result<()> {
-        if let Some(client) = self.ensure_wrtype_client() {
-            debug!(
-                shortcut = shortcut.as_str(),
-                "Wayland virtual keyboard paste route attempt"
-            );
-            let result = match shortcut {
-                PasteShortcut::CtrlV => send_virtual_keyboard_paste(client, false),
-                PasteShortcut::CtrlShiftV => send_virtual_keyboard_paste(client, true),
-                PasteShortcut::ShiftInsert => send_virtual_keyboard_global_paste(client),
-            };
-
-            match result {
-                Ok(_) => {
-                    info!("✅ Text injected via Wayland virtual keyboard paste route");
-                    return Ok(());
-                }
-                Err(err) => {
-                    self.invalidate_wrtype_client();
-                    return Err(err);
-                }
-            }
-        }
-
-        Err(anyhow::anyhow!(
-            "Wayland virtual keyboard route unavailable"
-        ))
-    }
-
-    fn try_enigo_paste(&mut self, shortcut: PasteShortcut) -> Result<()> {
-        debug!(shortcut = shortcut.as_str(), "Enigo paste route attempt");
-        match shortcut {
-            PasteShortcut::CtrlV | PasteShortcut::CtrlShiftV => self.inject_via_enigo_shift_paste(),
-            PasteShortcut::ShiftInsert => self.inject_via_enigo_global_paste(),
-        }
-    }
-
-    fn copy_wayland_clipboard(&self, text: &str) -> Result<(), WlCopyError> {
-        let bytes = text.as_bytes().to_vec();
-
-        let mut both = Options::new();
-        both.clipboard(ClipboardType::Both);
-        match both.copy(
-            Source::Bytes(bytes.clone().into_boxed_slice()),
-            MimeType::Text,
-        ) {
-            Ok(_) => Ok(()),
-            Err(WlCopyError::PrimarySelectionUnsupported) => {
-                let mut regular = Options::new();
-                regular.clipboard(ClipboardType::Regular);
-                regular.copy(Source::Bytes(bytes.into_boxed_slice()), MimeType::Text)
-            }
-            Err(err) => Err(err),
-        }
-    }
-
-    fn ensure_wrtype_client(&mut self) -> Option<&mut WrtypeClient> {
-        if !self.wayland_env {
-            return None;
-        }
-
-        if self.wrtype_client.is_none() && !self.wrtype_attempted {
-            self.wrtype_attempted = true;
-            match WrtypeClient::new() {
-                Ok(client) => {
-                    debug!("Initialized Wayland virtual keyboard client");
-                    self.wrtype_client = Some(client);
-                }
-                Err(err) => {
-                    warn!("Failed to initialize Wayland virtual keyboard client: {err:?}");
-                }
-            }
-        }
-
-        self.wrtype_client.as_mut()
-    }
-
-    fn invalidate_wrtype_client(&mut self) {
-        self.wrtype_client = None;
-        self.wrtype_attempted = false;
-    }
-
-    fn inject_via_enigo_shift_paste(&mut self) -> Result<()> {
-        use enigo::{Direction, Key};
-        // Initialize fallback keyboard injection only when needed to avoid
-        // keeping a persistent virtual keyboard active for the entire app lifetime.
-        let mut enigo = enigo::Enigo::new(&Settings::default())
-            .context("Failed to initialize Enigo for text injection")?;
-
-        enigo
-            .key(Key::Control, Direction::Press)
-            .context("Failed to press Ctrl")?;
-        enigo
-            .key(Key::Shift, Direction::Press)
-            .context("Failed to press Shift")?;
-        enigo
-            .key(Key::Unicode('v'), Direction::Click)
-            .context("Failed to press V")?;
-        enigo
-            .key(Key::Shift, Direction::Release)
-            .context("Failed to release Shift")?;
-        enigo
-            .key(Key::Control, Direction::Release)
-            .context("Failed to release Ctrl")?;
-
-        info!("✅ Text injected via Enigo fallback paste");
-        Ok(())
-    }
-
-    fn inject_via_enigo_global_paste(&mut self) -> Result<()> {
-        use enigo::{Direction, Key};
-        // Initialize fallback keyboard injection only when needed to avoid
-        // keeping a persistent virtual keyboard active for the entire app lifetime.
-        let mut enigo = enigo::Enigo::new(&Settings::default())
-            .context("Failed to initialize Enigo for text injection")?;
-
-        // Universal paste: Shift+Insert works in most applications including terminals
-        enigo
-            .key(Key::Shift, Direction::Press)
-            .context("Failed to press Shift")?;
-        enigo
-            .key(Key::Insert, Direction::Click)
-            .context("Failed to press Insert")?;
-        enigo
-            .key(Key::Shift, Direction::Release)
-            .context("Failed to release Shift")?;
-
-        info!("✅ Text injected via Enigo universal paste (Shift+Insert)");
-        Ok(())
-    }
-}
-
-fn send_virtual_keyboard_paste(client: &mut WrtypeClient, use_shift: bool) -> Result<()> {
-    if use_shift {
-        client.send_shortcut(&[Modifier::Ctrl, Modifier::Shift], "v")
-    } else {
-        client.send_shortcut(&[Modifier::Ctrl], "v")
-    }
-}
-
-fn send_virtual_keyboard_global_paste(client: &mut WrtypeClient) -> Result<()> {
-    // Universal paste: Shift+Insert works in most applications including terminals
-    client.send_shortcut(&[Modifier::Shift], "Insert")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn direct_typing_injector() -> TextInjector {
-        // Paste options must not override the explicit clipboard opt-out.
-        TextInjector::new(true, true, vec!["kitty".into()], vec!["zed".into()], false)
-            .expect("direct typing must initialize without a clipboard connection")
-    }
-
-    #[test]
-    fn direct_typing_initializes_without_clipboard() {
-        let injector = direct_typing_injector();
-        assert!(injector.clipboard.is_none());
-        assert!(injector.wrtype_client.is_none());
-        assert!(!injector.wrtype_attempted);
-    }
-
-    #[tokio::test]
-    async fn direct_typing_ignores_whitespace_without_connecting() {
-        let mut injector = direct_typing_injector();
-        injector
-            .inject_text(" \n\t ")
+        let focus = self
+            .effects
+            .focus()
             .await
-            .expect("empty transcript");
-        assert!(injector.wrtype_client.is_none());
-        assert!(!injector.wrtype_attempted);
+            .context("Cannot determine delivery focus")?;
+        let insertion = match intent {
+            DeliveryIntent::Type => Insertion::Type,
+            DeliveryIntent::Paste => {
+                let capabilities = self.effects.capabilities();
+                let class_hint = focus.as_ref().and_then(|window| {
+                    class_paste_hint_for_class(
+                        &window.class,
+                        &self.config.shift_classes,
+                        &self.config.shift_insert_classes,
+                    )
+                });
+                let route = plan_paste_route(PasteRouteContext {
+                    global_paste_shortcut: self.config.global_paste_shortcut,
+                    default_shift_paste: self.config.shift_paste,
+                    class_hint,
+                    hyprland_available: capabilities.hyprland,
+                    wayland_env: capabilities.wayland,
+                })
+                .context("Paste requires Hyprland IPC or a Wayland virtual keyboard")?;
+                Insertion::Paste(route)
+            }
+            DeliveryIntent::Copy => unreachable!("copy handled before keyboard preparation"),
+        };
+
+        self.effects
+            .prepare(insertion)
+            .context("Delivery capability unavailable")?;
+        // All exits after preparation release native resources. Dispatch once:
+        // an IPC/write error does not prove the application received nothing.
+        let result = self.perform(text, insertion, focus.as_ref()).await;
+        let cleanup = self.effects.cleanup(insertion);
+        match (result, cleanup) {
+            (Err(error), Err(cleanup)) => {
+                Err(error.context(format!("Keyboard cleanup also failed: {cleanup:#}")))
+            }
+            (Err(error), _) => Err(error),
+            (Ok(()), Err(error)) => {
+                Err(error.context("Text was dispatched, but keyboard cleanup failed; do not retry"))
+            }
+            (Ok(()), Ok(())) => Ok(()),
+        }
     }
 
-    #[tokio::test]
-    async fn direct_typing_reports_unavailable_keyboard_instead_of_pasting() {
-        let mut injector = direct_typing_injector();
-        // Simulate an unsupported session without mutating process-wide env vars.
-        injector.wayland_env = false;
-        let error = injector
-            .inject_text("Hello, café — 世界!\nNext\tline")
-            .await
-            .expect_err("direct typing must fail when virtual keyboards are unavailable");
-        assert!(error.to_string().contains("Direct typing requires"));
-        assert!(injector.clipboard.is_none());
-        assert!(injector.wrtype_client.is_none());
-        assert!(!injector.wrtype_attempted);
+    async fn perform(
+        &mut self,
+        text: &str,
+        insertion: Insertion,
+        focus: Option<&Focus>,
+    ) -> Result<()> {
+        self.effects.settle_focus().await?;
+        self.effects.validate_focus(focus).await?;
+        if matches!(insertion, Insertion::Paste(_)) {
+            self.effects.publish_clipboard(text).await?;
+            self.effects.validate_focus(focus).await?;
+        }
+        self.effects.insert(insertion, text).await.map_err(|error| {
+            anyhow!("Text delivery failed; insertion may be partial or complete; no retry attempted: {error:#}")
+        })
     }
+}
+
+type EffectFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T>> + Send + 'a>>;
+
+#[derive(Debug, Clone, Copy, Default)]
+struct Capabilities {
+    hyprland: bool,
+    wayland: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Focus {
+    address: String,
+    class: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Insertion {
+    Type,
+    Paste(PasteRoute),
+}
+
+/// Exercise this boundary through `TextInjector::deliver`. Preparation opens
+/// connections; it must never insert text or alter the clipboard.
+trait DeliveryEffects: Send {
+    fn capabilities(&self) -> Capabilities;
+    fn focus(&mut self) -> EffectFuture<'_, Option<Focus>>;
+    fn prepare(&mut self, insertion: Insertion) -> Result<()>;
+    fn settle_focus(&mut self) -> EffectFuture<'_, ()>;
+    fn validate_focus<'a>(&'a mut self, focus: Option<&'a Focus>) -> EffectFuture<'a, ()>;
+    fn publish_clipboard<'a>(&'a mut self, text: &'a str) -> EffectFuture<'a, ()>;
+    fn insert<'a>(&'a mut self, insertion: Insertion, text: &'a str) -> EffectFuture<'a, ()>;
+    fn cleanup(&mut self, insertion: Insertion) -> Result<()>;
 }

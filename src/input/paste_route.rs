@@ -47,21 +47,10 @@ pub(super) enum PasteShortcut {
     ShiftInsert,
 }
 
-impl PasteShortcut {
-    pub(super) fn as_str(self) -> &'static str {
-        match self {
-            Self::CtrlV => "ctrl+v",
-            Self::CtrlShiftV => "ctrl+shift+v",
-            Self::ShiftInsert => "shift+insert",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum PasteRoute {
     Hyprland(PasteShortcut),
     VirtualKeyboard(PasteShortcut),
-    Enigo(PasteShortcut),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -73,40 +62,24 @@ pub(super) struct PasteRouteContext {
     pub wayland_env: bool,
 }
 
-pub(super) fn plan_paste_routes(context: PasteRouteContext) -> Vec<PasteRoute> {
-    if context.global_paste_shortcut || context.class_hint == Some(PasteShortcut::ShiftInsert) {
-        return shift_insert_routes(context.hyprland_available, context.wayland_env);
-    }
-
+/// Select once, before publishing clipboard contents. A failed dispatch must
+/// never advance to another route because the first may already have inserted.
+pub(super) fn plan_paste_route(context: PasteRouteContext) -> Option<PasteRoute> {
     let shortcut = match context.class_hint {
+        _ if context.global_paste_shortcut => PasteShortcut::ShiftInsert,
+        Some(PasteShortcut::ShiftInsert) => PasteShortcut::ShiftInsert,
         Some(PasteShortcut::CtrlShiftV) => PasteShortcut::CtrlShiftV,
         _ if context.default_shift_paste => PasteShortcut::CtrlShiftV,
         _ => PasteShortcut::CtrlV,
     };
 
-    let mut routes = Vec::new();
     if context.hyprland_available {
-        routes.push(PasteRoute::Hyprland(shortcut));
+        Some(PasteRoute::Hyprland(shortcut))
+    } else if context.wayland_env {
+        Some(PasteRoute::VirtualKeyboard(shortcut))
+    } else {
+        None
     }
-    if context.wayland_env {
-        routes.push(PasteRoute::VirtualKeyboard(shortcut));
-    }
-    // Preserve the historical X/Wayland fallback: Ctrl+Shift+V is more likely
-    // to paste into terminals than Ctrl+V after higher-confidence routes fail.
-    routes.push(PasteRoute::Enigo(PasteShortcut::CtrlShiftV));
-    routes
-}
-
-fn shift_insert_routes(hyprland_available: bool, wayland_env: bool) -> Vec<PasteRoute> {
-    let mut routes = Vec::new();
-    if hyprland_available {
-        routes.push(PasteRoute::Hyprland(PasteShortcut::ShiftInsert));
-    }
-    if wayland_env {
-        routes.push(PasteRoute::VirtualKeyboard(PasteShortcut::ShiftInsert));
-    }
-    routes.push(PasteRoute::Enigo(PasteShortcut::ShiftInsert));
-    routes
 }
 
 pub(super) fn class_paste_hint_for_class(
@@ -187,6 +160,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn unsupported_session_has_no_paste_routes() {
+        assert!(plan_paste_route(PasteRouteContext {
+            global_paste_shortcut: false,
+            default_shift_paste: false,
+            class_hint: None,
+            hyprland_available: false,
+            wayland_env: false,
+        })
+        .is_none());
+    }
+
+    #[test]
+    fn every_candidate_preserves_the_selected_shortcut() {
+        let route = plan_paste_route(PasteRouteContext {
+            global_paste_shortcut: false,
+            default_shift_paste: false,
+            class_hint: None,
+            hyprland_available: false,
+            wayland_env: true,
+        });
+        assert_eq!(
+            route,
+            Some(PasteRoute::VirtualKeyboard(PasteShortcut::CtrlV))
+        );
+    }
+
+    #[test]
     fn class_paste_hint_uses_first_class_instantiation() {
         let shift_classes = normalize_hint_classes(vec!["foo".to_string(), "zed".to_string()]);
         let shift_insert_classes =
@@ -231,36 +231,28 @@ mod tests {
     #[test]
     fn global_paste_plans_shift_insert_routes() {
         assert_eq!(
-            plan_paste_routes(PasteRouteContext {
+            plan_paste_route(PasteRouteContext {
                 global_paste_shortcut: true,
                 default_shift_paste: false,
                 class_hint: None,
                 hyprland_available: true,
                 wayland_env: true,
             }),
-            vec![
-                PasteRoute::Hyprland(PasteShortcut::ShiftInsert),
-                PasteRoute::VirtualKeyboard(PasteShortcut::ShiftInsert),
-                PasteRoute::Enigo(PasteShortcut::ShiftInsert),
-            ]
+            Some(PasteRoute::Hyprland(PasteShortcut::ShiftInsert))
         );
     }
 
     #[test]
-    fn default_paste_plans_hyprland_then_virtual_then_enigo_fallback() {
+    fn default_paste_selects_hyprland_before_dispatch() {
         assert_eq!(
-            plan_paste_routes(PasteRouteContext {
+            plan_paste_route(PasteRouteContext {
                 global_paste_shortcut: false,
                 default_shift_paste: false,
                 class_hint: None,
                 hyprland_available: true,
                 wayland_env: true,
             }),
-            vec![
-                PasteRoute::Hyprland(PasteShortcut::CtrlV),
-                PasteRoute::VirtualKeyboard(PasteShortcut::CtrlV),
-                PasteRoute::Enigo(PasteShortcut::CtrlShiftV),
-            ]
+            Some(PasteRoute::Hyprland(PasteShortcut::CtrlV))
         );
     }
 }
