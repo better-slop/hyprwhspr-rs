@@ -71,7 +71,11 @@ jobs:
         with:
           shared-key: release-plz
 
+      - name: Prepare locked sources for API checks
+        run: bash .github/scripts/prepare-semver-sources.sh
+
       - name: Run release-plz release-pr
+        # Keep the registry visible to release-plz; only its API checker uses locked sources.
         uses: release-plz/action@v0.5
         with:
           command: release-pr
