@@ -216,7 +216,8 @@ impl HyprwhsprApp {
             .control_rx
             .take()
             .expect("control receiver already consumed");
-        let _control_server = ControlServer::spawn(self.control_tx.clone())?;
+        let _control_server =
+            ControlServer::spawn(self.control_tx.clone(), self.config_manager.subscribe())?;
         self.ensure_input_manager(self.current_config.shortcuts.clone())?;
         self.log_shortcut_configuration(&self.current_config.shortcuts);
 

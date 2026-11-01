@@ -14,7 +14,10 @@ pub struct ControlServer {
 }
 
 impl ControlServer {
-    pub fn spawn(tx: mpsc::Sender<ControlRequest>) -> Result<Option<Self>> {
+    pub fn spawn(
+        tx: mpsc::Sender<ControlRequest>,
+        config_rx: watch::Receiver<Config>,
+    ) -> Result<Option<Self>> {
         let path = control_socket_path()?;
         prepare_socket_path(&path)?;
         let listener = UnixListener::bind(&path)
@@ -25,8 +28,11 @@ impl ControlServer {
                 match listener.accept().await {
                     Ok((stream, _)) => {
                         let request_tx = tx.clone();
+                        let request_config = config_rx.clone();
                         tokio::spawn(async move {
-                            if let Err(err) = handle_client(stream, request_tx).await {
+                            if let Err(err) =
+                                handle_client(stream, request_tx, request_config).await
+                            {
                                 tracing::warn!("Control client error: {err:#}");
                             }
                         });
@@ -62,10 +68,10 @@ pub async fn send_record_command(command: RecordCommand) -> Result<RecorderState
     parse_response(&exchange_request(command.as_str().as_bytes()).await?)
 }
 
-pub async fn send_copy_text(text: &str) -> Result<()> {
-    if text.len() > MAX_COPY_TEXT_BYTES {
-        bail!("Copy text exceeds 1 MiB limit");
-    }
+/// Apply the client's loaded limit before connecting. The daemon independently
+/// admits the request using its current config snapshot, which is authoritative.
+pub async fn send_copy_text(text: &str, max_copy_text_bytes: usize) -> Result<()> {
+    validate_copy_text_size(text.len(), max_copy_text_bytes)?;
     let mut request = Vec::with_capacity(COPY_PREFIX.len() + text.len());
     request.extend_from_slice(COPY_PREFIX);
     request.extend_from_slice(text.as_bytes());
@@ -102,15 +108,22 @@ async fn exchange_request(request: &[u8]) -> Result<String> {
     String::from_utf8(response).context("Control response must contain valid UTF-8")
 }
 
-async fn handle_client(mut stream: UnixStream, tx: mpsc::Sender<ControlRequest>) -> Result<()> {
+async fn handle_client(
+    mut stream: UnixStream,
+    tx: mpsc::Sender<ControlRequest>,
+    config_rx: watch::Receiver<Config>,
+) -> Result<()> {
+    // Take one coherent admission/framing policy for this request. New requests
+    // see watcher updates even while the recording session defers other config.
+    let limit = config_rx.borrow().max_copy_text_bytes;
     let mut request = Vec::new();
     (&mut stream)
-        .take((MAX_COPY_TEXT_BYTES + COPY_PREFIX.len() + 1) as u64)
+        .take(request_read_limit(limit)?)
         .read_to_end(&mut request)
         .await
         .context("Failed to read control request")?;
 
-    let response = match parse_request(&request) {
+    let response = match parse_request(&request, limit) {
         Ok(WireRequest::Record(command)) => {
             let (reply_tx, reply_rx) = oneshot::channel();
             tx.send(ControlRequest::Record { command, reply_tx })
@@ -182,11 +195,17 @@ fn prepare_socket_path(path: &PathBuf) -> Result<()> {
 mod tests {
     use super::*;
 
+    fn configured_limit(limit: usize) -> watch::Receiver<Config> {
+        let mut config = Config::default();
+        config.max_copy_text_bytes = limit;
+        watch::channel(config).1
+    }
+
     #[tokio::test]
     async fn copy_frame_waits_for_eof_and_preserves_text_until_acknowledged() {
         let (mut client, server) = UnixStream::pair().unwrap();
         let (tx, mut rx) = mpsc::channel(1);
-        let handler = tokio::spawn(handle_client(server, tx));
+        let handler = tokio::spawn(handle_client(server, tx, configured_limit(128)));
         let text = "\n世界\t$(touch /tmp/not-a-command) `literal`\n";
         client.write_all(COPY_PREFIX).await.unwrap();
         client.write_all(text.as_bytes()).await.unwrap();
@@ -216,7 +235,7 @@ mod tests {
     async fn rejected_frame_never_reaches_daemon_effects() {
         let (mut client, server) = UnixStream::pair().unwrap();
         let (tx, mut rx) = mpsc::channel(1);
-        let handler = tokio::spawn(handle_client(server, tx));
+        let handler = tokio::spawn(handle_client(server, tx, configured_limit(128)));
         client.write_all(b"copy\n\xff").await.unwrap();
         client.shutdown().await.unwrap();
         let mut response = String::new();
@@ -225,5 +244,101 @@ mod tests {
         assert!(response.contains("valid UTF-8"));
         handler.await.unwrap().unwrap();
         assert!(rx.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn configured_large_payload_reaches_daemon_without_old_cap() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let limit = 2 * 1024 * 1024;
+        let text = "x".repeat(1024 * 1024 + 1);
+        let (tx, mut rx) = mpsc::channel(1);
+        let handler = tokio::spawn(handle_client(server, tx, configured_limit(limit)));
+        client.write_all(COPY_PREFIX).await.unwrap();
+        client.write_all(text.as_bytes()).await.unwrap();
+        client.shutdown().await.unwrap();
+        match rx.recv().await.unwrap() {
+            ControlRequest::CopyText {
+                text: received,
+                reply_tx,
+            } => {
+                assert_eq!(received, text);
+                reply_tx.send(Ok(())).unwrap();
+            }
+            _ => panic!("expected clipboard-only request"),
+        }
+        let mut response = String::new();
+        client.read_to_string(&mut response).await.unwrap();
+        assert_eq!(response, "ok\n");
+        handler.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn daemon_rejects_small_limit_before_forwarding_effects() {
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let (tx, mut rx) = mpsc::channel(1);
+        let handler = tokio::spawn(handle_client(server, tx, configured_limit(3)));
+        client.write_all("copy\n🙂".as_bytes()).await.unwrap();
+        client.shutdown().await.unwrap();
+        let mut response = String::new();
+        client.read_to_string(&mut response).await.unwrap();
+        assert!(response.contains("max_copy_text_bytes limit of 3 bytes"));
+        handler.await.unwrap().unwrap();
+        assert!(rx.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn request_start_uses_latest_watched_limit_and_records_ignore_tiny_copy_limit() {
+        let mut config = Config::default();
+        config.max_copy_text_bytes = 1;
+        let (config_tx, config_rx) = watch::channel(config.clone());
+        config.max_copy_text_bytes = 4;
+        config_tx.send(config.clone()).unwrap();
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let (tx, mut rx) = mpsc::channel(1);
+        let handler = tokio::spawn(handle_client(server, tx, config_rx.clone()));
+        client.write_all("copy\n🙂".as_bytes()).await.unwrap();
+        client.shutdown().await.unwrap();
+        match rx.recv().await.unwrap() {
+            ControlRequest::CopyText { reply_tx, .. } => {
+                reply_tx.send(Ok(())).unwrap();
+            }
+            _ => panic!("updated limit must admit four-byte payload"),
+        }
+        handler.await.unwrap().unwrap();
+
+        config.max_copy_text_bytes = 1;
+        config_tx.send(config).unwrap();
+        let (mut client, server) = UnixStream::pair().unwrap();
+        let (tx, mut rx) = mpsc::channel(1);
+        let handler = tokio::spawn(handle_client(server, tx, config_rx));
+        client.write_all(b"status\n").await.unwrap();
+        client.shutdown().await.unwrap();
+        match rx.recv().await.unwrap() {
+            ControlRequest::Record { command, reply_tx } => {
+                assert_eq!(command, RecordCommand::Status);
+                reply_tx.send(Ok(RecorderState::Inactive)).unwrap();
+            }
+            _ => panic!("tiny copy limit must not reject record commands"),
+        }
+        handler.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn client_rejects_invalid_or_oversized_limits_before_connecting() {
+        assert!(send_copy_text("🙂", 3)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("limit of 3 bytes"));
+        assert!(send_copy_text("", 0)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("max_copy_text_bytes must be"));
+        assert!(send_copy_text("", usize::MAX)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("max_copy_text_bytes must be"));
     }
 }

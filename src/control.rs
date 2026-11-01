@@ -1,8 +1,10 @@
+use crate::config::Config;
 use anyhow::{anyhow, bail, Context, Result};
 use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
-use tokio::sync::{mpsc, oneshot};
+use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::sync::{mpsc, oneshot, watch};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecorderState {
@@ -89,9 +91,45 @@ pub enum ControlRequest {
     },
 }
 
-/// Bound both allocation and text transport. The prefix is additional framing.
-pub const MAX_COPY_TEXT_BYTES: usize = 1024 * 1024;
 const COPY_PREFIX: &[u8] = b"copy\n";
+// Record commands have fixed short verbs. Their framing allowance is separate
+// from copy payload policy, so a one-byte copy limit still permits `status\n`.
+const MAX_RECORD_FRAME_BYTES: usize = 64;
+pub(crate) const MAX_COPY_TEXT_LIMIT: usize = isize::MAX as usize - COPY_PREFIX.len() - 1;
+
+pub(crate) fn validate_copy_text_limit(limit: usize) -> Result<()> {
+    if limit == 0 || limit > MAX_COPY_TEXT_LIMIT {
+        bail!("max_copy_text_bytes must be between 1 and {MAX_COPY_TEXT_LIMIT}");
+    }
+    Ok(())
+}
+
+fn validate_copy_text_size(length: usize, limit: usize) -> Result<()> {
+    validate_copy_text_limit(limit)?;
+    if length > limit {
+        bail!("Copy text exceeds max_copy_text_bytes limit of {limit} bytes");
+    }
+    Ok(())
+}
+
+/// Bound stdin before allocating the entire payload. Client configuration gives
+/// an early resource bound; the daemon independently enforces its active config.
+pub async fn read_copy_text(reader: impl AsyncRead + Unpin, limit: usize) -> Result<String> {
+    validate_copy_text_limit(limit)?;
+    let mut bytes = Vec::new();
+    reader
+        .take((limit + 1) as u64)
+        .read_to_end(&mut bytes)
+        .await
+        .context("Cannot read copy text from stdin")?;
+    validate_copy_text_size(bytes.len(), limit)?;
+    String::from_utf8(bytes).context("Copy stdin must contain valid UTF-8")
+}
+
+fn request_read_limit(limit: usize) -> Result<u64> {
+    validate_copy_text_limit(limit)?;
+    Ok((limit + COPY_PREFIX.len() + 1).max(MAX_RECORD_FRAME_BYTES + 1) as u64)
+}
 
 #[derive(Debug, PartialEq, Eq)]
 enum WireRequest {
@@ -99,13 +137,15 @@ enum WireRequest {
     CopyText(String),
 }
 
-fn parse_request(bytes: &[u8]) -> Result<WireRequest> {
-    if bytes.len() > MAX_COPY_TEXT_BYTES + COPY_PREFIX.len() {
-        bail!("Control request exceeds 1 MiB text limit");
-    }
+fn parse_request(bytes: &[u8], limit: usize) -> Result<WireRequest> {
+    validate_copy_text_limit(limit)?;
     let text = std::str::from_utf8(bytes).context("Control request must contain valid UTF-8")?;
     if let Some(text) = text.strip_prefix("copy\n") {
+        validate_copy_text_size(text.len(), limit)?;
         return Ok(WireRequest::CopyText(text.to_owned()));
+    }
+    if bytes.len() > MAX_RECORD_FRAME_BYTES {
+        bail!("Record control frame exceeds protocol allowance");
     }
     Ok(WireRequest::Record(RecordCommand::from_str(text)?))
 }
@@ -121,7 +161,10 @@ mod platform {
     pub struct ControlServer;
 
     impl ControlServer {
-        pub fn spawn(_tx: mpsc::Sender<ControlRequest>) -> Result<Option<Self>> {
+        pub fn spawn(
+            _tx: mpsc::Sender<ControlRequest>,
+            _config_rx: watch::Receiver<Config>,
+        ) -> Result<Option<Self>> {
             Ok(None)
         }
     }
@@ -130,7 +173,7 @@ mod platform {
         bail!("`hyprwhspr-rs record` is currently only supported on Linux")
     }
 
-    pub async fn send_copy_text(_text: &str) -> Result<()> {
+    pub async fn send_copy_text(_text: &str, _max_copy_text_bytes: usize) -> Result<()> {
         bail!("`hyprwhspr-rs copy` is only supported on Linux")
     }
 }
@@ -203,31 +246,60 @@ mod tests {
     #[test]
     fn copy_frame_preserves_empty_and_multiline_payloads() {
         assert_eq!(
-            parse_request(b"copy\n").unwrap(),
+            parse_request(b"copy\n", 32).unwrap(),
             WireRequest::CopyText(String::new())
         );
         assert_eq!(
-            parse_request(b"copy\n\n\tend\n").unwrap(),
+            parse_request(b"copy\n\n\tend\n", 32).unwrap(),
             WireRequest::CopyText("\n\tend\n".into())
         );
         assert_eq!(
-            parse_request(b"status\n").unwrap(),
+            parse_request(b"status\n", 1).unwrap(),
             WireRequest::Record(RecordCommand::Status)
         );
-        assert!(parse_request(b"").is_err());
-        assert!(parse_request(b"copy\n\xff").is_err());
+        assert!(parse_request(b"", 32).is_err());
+        assert!(parse_request(b"copy\n\xff", 32).is_err());
     }
 
     #[test]
     fn copy_frame_enforces_byte_bound() {
         let mut bytes = COPY_PREFIX.to_vec();
-        bytes.resize(MAX_COPY_TEXT_BYTES + COPY_PREFIX.len(), b'x');
-        assert!(parse_request(&bytes).is_ok());
+        bytes.resize(4 + COPY_PREFIX.len(), b'x');
+        assert!(parse_request(&bytes, 4).is_ok());
         bytes.push(b'x');
-        assert!(parse_request(&bytes)
+        assert!(parse_request(&bytes, 4)
             .unwrap_err()
             .to_string()
-            .contains("1 MiB"));
+            .contains("max_copy_text_bytes limit of 4 bytes"));
+    }
+
+    #[test]
+    fn copy_limit_counts_utf8_bytes_and_leaves_record_commands_independent() {
+        let frame = "copy\n🙂".as_bytes();
+        assert!(parse_request(frame, 4).is_ok());
+        assert!(parse_request(frame, 3).is_err());
+        for command in [b"start".as_slice(), b"stop\n", b"toggle", b"status\r\n"] {
+            assert!(matches!(
+                parse_request(command, 1).unwrap(),
+                WireRequest::Record(_)
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn stdin_respects_configured_limit_and_preserves_literal_utf8() {
+        let text = "🙂\n\t$`";
+        assert_eq!(
+            read_copy_text(text.as_bytes(), text.len()).await.unwrap(),
+            text
+        );
+        assert!(read_copy_text(text.as_bytes(), text.len() - 1)
+            .await
+            .is_err());
+        assert_eq!(read_copy_text(b"".as_slice(), 1).await.unwrap(), "");
+        assert!(read_copy_text(b"\xff".as_slice(), 1).await.is_err());
+        assert!(read_copy_text(b"x".as_slice(), 0).await.is_err());
+        assert!(read_copy_text(b"x".as_slice(), usize::MAX).await.is_err());
     }
 
     #[test]

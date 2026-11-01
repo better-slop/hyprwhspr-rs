@@ -2,6 +2,52 @@ use hyprwhspr_rs::input::DeliveryIntent;
 use hyprwhspr_rs::Config;
 
 #[test]
+fn copy_limit_defaults_and_serializes_as_config() {
+    for config in [
+        Config::default(),
+        serde_json::from_str::<Config>("{}").unwrap(),
+    ] {
+        let serialized = serde_json::to_value(config).unwrap();
+        assert_eq!(serialized["max_copy_text_bytes"], 1_048_576);
+    }
+    let config: Config =
+        serde_json::from_value(serde_json::json!({"max_copy_text_bytes": 2_097_152})).unwrap();
+    assert_eq!(
+        serde_json::to_value(config).unwrap()["max_copy_text_bytes"],
+        2_097_152
+    );
+}
+
+#[test]
+fn copy_limit_rejects_zero_overflow_and_noninteger_values() {
+    for value in [
+        serde_json::json!(0),
+        serde_json::json!(u64::MAX),
+        serde_json::json!(-1),
+        serde_json::json!(1.5),
+    ] {
+        assert!(serde_json::from_value::<Config>(
+            serde_json::json!({"max_copy_text_bytes": value})
+        )
+        .is_err());
+    }
+}
+
+#[test]
+fn generated_schema_exposes_copy_limit() {
+    let schema: serde_json::Value =
+        serde_json::from_str(&hyprwhspr_rs::config::generated_schema_json().unwrap()).unwrap();
+    assert_eq!(
+        schema.pointer("/properties/max_copy_text_bytes/default"),
+        Some(&serde_json::json!(1_048_576))
+    );
+    assert_eq!(
+        schema.pointer("/properties/max_copy_text_bytes/minimum"),
+        Some(&serde_json::json!(1))
+    );
+}
+
+#[test]
 fn released_clipboard_option_accepts_both_boolean_values() {
     for value in [false, true] {
         let config: Config =
