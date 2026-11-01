@@ -1,9 +1,8 @@
 use anyhow::{Context, Result};
 use futures_util::StreamExt;
-use std::collections::HashSet;
 use std::future;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{Duration, Instant};
 use tokio_udev::{AsyncMonitorSocket, EventType, MonitorBuilder};
 use tracing::warn;
@@ -23,12 +22,6 @@ pub(super) enum InputSourceEvent {
         drained_events: usize,
         key_events: usize,
     },
-}
-
-pub(super) trait InputEventSource {
-    fn pressed_keys(&self) -> &HashSet<evdev::KeyCode>;
-    fn device_count(&self) -> usize;
-    fn device_paths(&self) -> Vec<PathBuf>;
 }
 
 pub(super) struct EvdevUdevEventSource {
@@ -129,17 +122,13 @@ impl EvdevUdevEventSource {
     }
 }
 
-impl InputEventSource for EvdevUdevEventSource {
-    fn pressed_keys(&self) -> &HashSet<evdev::KeyCode> {
+impl EvdevUdevEventSource {
+    pub(super) fn pressed_keys(&self) -> &std::collections::HashSet<evdev::KeyCode> {
         self.registry.pressed_keys()
     }
 
-    fn device_count(&self) -> usize {
+    pub(super) fn device_count(&self) -> usize {
         self.registry.device_count()
-    }
-
-    fn device_paths(&self) -> Vec<PathBuf> {
-        self.registry.device_paths()
     }
 }
 

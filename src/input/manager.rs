@@ -1,26 +1,18 @@
+//! Keyboard activation lifecycle, independent of the native event mechanism.
+
 use anyhow::{Context, Result};
-use std::path::PathBuf;
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, oneshot};
-use tokio::time;
+use tokio::sync::{mpsc, watch};
 use tracing::{debug, error, info, warn};
 
-use crate::config::ShortcutsConfig;
-use crate::input::shortcuts::{
-    ShortcutController, ShortcutEvent, ShortcutInput, ShortcutPhase, ShortcutSummary,
+use super::activation::{
+    ActivationHealth, ActivationSource, ShortcutEvent, ShortcutPhase, ShortcutSummary,
 };
-use crate::input::source::{EvdevUdevEventSource, InputEventSource, InputSourceEvent};
-
-const EVDEV_TICK: Duration = Duration::from_millis(10);
-const MAX_INPUT_EVENTS_PER_TICK: usize = 256;
+use super::linux::LinuxActivationSource;
+use crate::config::ShortcutsConfig;
 
 #[derive(Debug, Clone, Default)]
 pub struct InputStats {
-    pub udev_events_seen: u64,
-    pub udev_events_coalesced: u64,
-    pub device_refreshes: u64,
-    pub key_events_seen: u64,
     pub shortcut_events_emitted: u64,
     pub loop_busy_ticks: u64,
 }
@@ -30,70 +22,80 @@ mod tests;
 
 #[derive(Debug, Clone)]
 pub struct InputSnapshot {
-    pub device_count: usize,
-    pub devices: Vec<PathBuf>,
+    pub backend: &'static str,
+    pub health: ActivationHealth,
     pub shortcuts: Vec<ShortcutSummary>,
     pub app_busy: bool,
     pub stats: InputStats,
 }
 
+impl InputSnapshot {
+    fn starting() -> Self {
+        Self {
+            backend: "initializing",
+            health: ActivationHealth::Starting,
+            shortcuts: Vec::new(),
+            app_busy: false,
+            stats: InputStats::default(),
+        }
+    }
+}
+
 pub struct InputManagerHandle {
     command_tx: mpsc::UnboundedSender<InputManagerCommand>,
+    event_rx: mpsc::Receiver<ShortcutEvent>,
+    snapshot_rx: watch::Receiver<InputSnapshot>,
     handle: Option<JoinHandle<()>>,
 }
 
 enum InputManagerCommand {
     UpdateShortcuts(ShortcutsConfig),
     SetAppBusy(bool),
-    Snapshot(oneshot::Sender<InputSnapshot>),
     Shutdown,
 }
 
-struct InputManagerRuntime<S = EvdevUdevEventSource> {
+struct InputManagerRuntime<S> {
     command_rx: mpsc::UnboundedReceiver<InputManagerCommand>,
     event_tx: mpsc::Sender<ShortcutEvent>,
+    snapshot_tx: watch::Sender<InputSnapshot>,
     source: S,
-    shortcuts: ShortcutController,
     stats: InputStats,
     app_busy: bool,
-    last_busy_log: Instant,
-}
-
-enum ShortcutTransitionCause {
-    KeyStateChanged,
-    DeviceSetChanged,
 }
 
 impl InputManagerHandle {
-    pub fn spawn(
-        shortcuts: ShortcutsConfig,
-        event_tx: mpsc::Sender<ShortcutEvent>,
-    ) -> Result<Self> {
-        ShortcutController::new(shortcuts.clone())?;
-        let (command_tx, command_rx) = mpsc::unbounded_channel();
-        let (init_tx, init_rx) = std::sync::mpsc::sync_channel(1);
+    pub fn spawn(shortcuts: ShortcutsConfig) -> Result<Self> {
+        LinuxActivationSource::validate(shortcuts.clone())?;
+        Self::spawn_with_source(move || LinuxActivationSource::open(shortcuts), 10)
+    }
 
+    fn spawn_with_source<S: ActivationSource + 'static>(
+        open: impl FnOnce() -> Result<S> + Send + 'static,
+        event_capacity: usize,
+    ) -> Result<Self> {
+        let (command_tx, command_rx) = mpsc::unbounded_channel();
+        let (event_tx, event_rx) = mpsc::channel(event_capacity);
+        let (snapshot_tx, snapshot_rx) = watch::channel(InputSnapshot::starting());
         let handle = thread::spawn(move || {
-            let result = run_input_thread(shortcuts, event_tx, command_rx);
-            if let Err(err) = result {
+            if let Err(err) = run_input_thread(open, event_tx, command_rx, snapshot_tx) {
                 error!("Input manager stopped: {:#}", err);
             }
-            let _ = init_tx.send(());
         });
-
-        // Surface fast thread-start failures without forcing the app to block on the manager.
-        if let Ok(()) = init_rx.recv_timeout(Duration::from_millis(1)) {
-            warn!("Input manager exited during startup");
-        }
-
         Ok(Self {
             command_tx,
+            event_rx,
+            snapshot_rx,
             handle: Some(handle),
         })
     }
 
+    /// Wait for a semantic transition. Cancellation safe in a host select loop.
+    pub async fn next_event(&mut self) -> Option<ShortcutEvent> {
+        self.event_rx.recv().await
+    }
+
     pub fn update_shortcuts(&self, shortcuts: ShortcutsConfig) -> Result<()> {
-        ShortcutController::new(shortcuts.clone())?;
+        LinuxActivationSource::validate(shortcuts.clone())?;
         self.command_tx
             .send(InputManagerCommand::UpdateShortcuts(shortcuts))
             .context("input manager is not running")
@@ -108,15 +110,16 @@ impl InputManagerHandle {
         }
     }
 
-    pub async fn snapshot(&self) -> Result<InputSnapshot> {
-        let (tx, rx) = oneshot::channel();
-        self.command_tx
-            .send(InputManagerCommand::Snapshot(tx))
-            .context("input manager is not running")?;
-        rx.await.context("input manager dropped snapshot reply")
+    /// Last health remains available after native failure or shutdown.
+    pub fn snapshot(&self) -> InputSnapshot {
+        self.snapshot_rx.borrow().clone()
     }
 
+    /// Stop native activation and discard pending delivery before joining.
+    /// Session hosts clean up active capture before stopping activation.
     pub fn stop(&mut self) {
+        self.event_rx.close();
+        while self.event_rx.try_recv().is_ok() {}
         let _ = self.command_tx.send(InputManagerCommand::Shutdown);
         if let Some(handle) = self.handle.take() {
             if let Err(err) = handle.join() {
@@ -132,243 +135,128 @@ impl Drop for InputManagerHandle {
     }
 }
 
-fn run_input_thread(
-    shortcuts: ShortcutsConfig,
+fn run_input_thread<S: ActivationSource>(
+    open: impl FnOnce() -> Result<S>,
     event_tx: mpsc::Sender<ShortcutEvent>,
     command_rx: mpsc::UnboundedReceiver<InputManagerCommand>,
+    snapshot_tx: watch::Sender<InputSnapshot>,
 ) -> Result<()> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
+    let result = tokio::runtime::Builder::new_current_thread()
         .enable_io()
         .enable_time()
         .build()
-        .context("failed to build input manager runtime")?;
-
+        .context("failed to build input manager runtime");
+    let runtime = match result {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            snapshot_tx.send_modify(|snapshot| {
+                snapshot.health = ActivationHealth::Failed(format!("{err:#}"))
+            });
+            return Err(err);
+        }
+    };
     runtime.block_on(async move {
-        let manager = InputManagerRuntime::new(shortcuts, event_tx, command_rx)?;
-        manager.run().await
+        let source = match open() {
+            Ok(source) => source,
+            Err(err) => {
+                snapshot_tx.send_modify(|snapshot| {
+                    snapshot.health = ActivationHealth::Failed(format!("{err:#}"))
+                });
+                return Err(err);
+            }
+        };
+        InputManagerRuntime::with_source(event_tx, command_rx, snapshot_tx, source)
+            .run()
+            .await
     })
 }
 
-impl InputManagerRuntime<EvdevUdevEventSource> {
-    fn new(
-        shortcuts: ShortcutsConfig,
+impl<S: ActivationSource> InputManagerRuntime<S> {
+    fn with_source(
         event_tx: mpsc::Sender<ShortcutEvent>,
         command_rx: mpsc::UnboundedReceiver<InputManagerCommand>,
-    ) -> Result<Self> {
-        let source = EvdevUdevEventSource::open()?;
-        Self::with_source(shortcuts, event_tx, command_rx, source)
+        snapshot_tx: watch::Sender<InputSnapshot>,
+        source: S,
+    ) -> Self {
+        Self {
+            command_rx,
+            event_tx,
+            snapshot_tx,
+            source,
+            stats: InputStats::default(),
+            app_busy: false,
+        }
     }
 
     async fn run(mut self) -> Result<()> {
-        let mut evdev_tick = time::interval(EVDEV_TICK);
-        evdev_tick.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
-        let mut refresh_tick = time::interval(Duration::from_millis(50));
-        refresh_tick.set_missed_tick_behavior(time::MissedTickBehavior::Skip);
-
         info!("Input manager started");
-
+        self.publish_snapshot(None);
         loop {
-            let mut busy = false;
-
-            tokio::select! {
+            let result = tokio::select! {
                 command = self.command_rx.recv() => {
-                    let should_shutdown = self.shutting_down(command.as_ref());
-                    busy = self.handle_command(command).await?;
-                    if should_shutdown {
-                        break;
+                    match command {
+                        Some(InputManagerCommand::UpdateShortcuts(shortcuts)) => self.source.configure(shortcuts),
+                        Some(InputManagerCommand::SetAppBusy(busy)) => {
+                            self.app_busy = busy;
+                            Ok(Vec::new())
+                        }
+                        Some(InputManagerCommand::Shutdown) | None => {
+                            let events = self.source.cancel();
+                            self.emit_events(events).await;
+                            self.publish_snapshot(Some(ActivationHealth::Stopped));
+                            info!("Input manager shutting down");
+                            return Ok(());
+                        }
                     }
                 }
-                event = self.source.next_udev_event(), if self.source.udev_events_enabled() => {
-                    let stats = self.source.handle_udev_event(event);
-                    self.stats.udev_events_seen += stats.seen;
-                    self.stats.udev_events_coalesced += stats.coalesced;
-                    busy = stats.seen > 0;
-                }
-                _ = refresh_tick.tick() => {
-                    if self.source.refresh_due() {
-                        self.stats.device_refreshes += 1;
-                        let events = self.source.refresh_devices()?;
-                        busy = self.dispatch_source_events(events).await;
+                result = self.source.next() => result,
+            };
+            match result {
+                Ok(events) => {
+                    if !events.is_empty() {
+                        self.stats.loop_busy_ticks += 1;
                     }
+                    self.emit_events(events).await;
+                    self.publish_snapshot(None);
                 }
-                _ = evdev_tick.tick() => {
-                    let events = self.source.poll_input_events(MAX_INPUT_EVENTS_PER_TICK)?;
-                    busy = self.dispatch_source_events(events).await;
+                Err(err) => {
+                    let events = self.source.cancel();
+                    self.emit_events(events).await;
+                    self.publish_snapshot(Some(ActivationHealth::Failed(format!("{err:#}"))));
+                    return Err(err);
                 }
-            }
-
-            if busy {
-                self.stats.loop_busy_ticks += 1;
-                self.log_if_busy();
-            }
-        }
-
-        Ok(())
-    }
-}
-
-impl<S: InputEventSource> InputManagerRuntime<S> {
-    fn with_source(
-        shortcuts: ShortcutsConfig,
-        event_tx: mpsc::Sender<ShortcutEvent>,
-        command_rx: mpsc::UnboundedReceiver<InputManagerCommand>,
-        source: S,
-    ) -> Result<Self> {
-        let shortcuts = ShortcutController::new(shortcuts)?;
-
-        Ok(Self {
-            command_rx,
-            event_tx,
-            source,
-            shortcuts,
-            stats: InputStats::default(),
-            app_busy: false,
-            last_busy_log: Instant::now(),
-        })
-    }
-
-    async fn handle_command(&mut self, command: Option<InputManagerCommand>) -> Result<bool> {
-        match command {
-            Some(InputManagerCommand::UpdateShortcuts(shortcuts)) => {
-                let pressed_keys = self.source.pressed_keys().clone();
-                for event in self.shortcuts.transition(ShortcutInput::ConfigChanged {
-                    shortcuts,
-                    pressed_keys: &pressed_keys,
-                    now: Instant::now(),
-                })? {
-                    self.emit_shortcut(event).await;
-                }
-                Ok(true)
-            }
-            Some(InputManagerCommand::SetAppBusy(app_busy)) => {
-                self.app_busy = app_busy;
-                Ok(false)
-            }
-            Some(InputManagerCommand::Snapshot(reply_tx)) => {
-                let _ = reply_tx.send(self.snapshot());
-                Ok(false)
-            }
-            Some(InputManagerCommand::Shutdown) | None => {
-                info!("Input manager shutting down");
-                Ok(false)
             }
         }
     }
 
-    fn shutting_down(&self, command: Option<&InputManagerCommand>) -> bool {
-        matches!(command, Some(InputManagerCommand::Shutdown) | None)
-    }
-
-    async fn dispatch_source_events(&mut self, events: Vec<InputSourceEvent>) -> bool {
-        let mut busy = false;
-
+    async fn emit_events(&mut self, events: Vec<ShortcutEvent>) {
         for event in events {
-            match event {
-                InputSourceEvent::KeyStateChanged { key_events } => {
-                    self.stats.key_events_seen += key_events as u64;
-                    self.transition_shortcuts(ShortcutTransitionCause::KeyStateChanged)
-                        .await;
-                    busy = true;
-                }
-                InputSourceEvent::DeviceSetChanged => {
-                    self.transition_shortcuts(ShortcutTransitionCause::DeviceSetChanged)
-                        .await;
-                    busy = true;
-                }
-                InputSourceEvent::SourceBackpressure {
-                    drained_events,
-                    key_events,
-                } => {
-                    debug!(
-                        drained_events,
-                        key_events,
-                        max_input_events_per_tick = MAX_INPUT_EVENTS_PER_TICK,
-                        "Input source reached per-tick event cap"
-                    );
-                    busy = true;
-                }
+            let result = if matches!(event.phase, ShortcutPhase::End | ShortcutPhase::Cancel) {
+                // Terminal events may stop an active recording. Backpressure must
+                // delay delivery rather than silently leave that recording active.
+                self.event_tx
+                    .send(event)
+                    .await
+                    .map_err(|err| err.to_string())
+            } else {
+                self.event_tx.try_send(event).map_err(|err| err.to_string())
+            };
+            match result {
+                Ok(()) => self.stats.shortcut_events_emitted += 1,
+                Err(err) if self.event_tx.is_closed() => debug!("App receiver closed: {}", err),
+                Err(err) => warn!("Failed to send shortcut start event: {}", err),
             }
-        }
-
-        busy
-    }
-
-    async fn transition_shortcuts(&mut self, cause: ShortcutTransitionCause) {
-        let now = Instant::now();
-        let pressed_keys = self.source.pressed_keys().clone();
-        let input = match cause {
-            ShortcutTransitionCause::KeyStateChanged => ShortcutInput::KeyStateChanged {
-                pressed_keys: &pressed_keys,
-                now,
-            },
-            ShortcutTransitionCause::DeviceSetChanged => ShortcutInput::DeviceSetChanged {
-                pressed_keys: &pressed_keys,
-                now,
-            },
-        };
-
-        match self.shortcuts.transition(input) {
-            Ok(events) => {
-                for event in events {
-                    self.emit_shortcut(event).await;
-                }
-            }
-            Err(err) => warn!("Failed to apply shortcut transition: {:#}", err),
         }
     }
 
-    async fn emit_shortcut(&mut self, event: ShortcutEvent) {
-        let phase = event.phase;
-        if matches!(phase, ShortcutPhase::End | ShortcutPhase::Cancel) {
-            if let Err(err) = self.event_tx.send(event).await {
-                debug!(
-                    "Dropped shortcut release event because app receiver closed: {}",
-                    err
-                );
-                return;
-            }
-            self.stats.shortcut_events_emitted += 1;
-            return;
-        }
-
-        if let Err(err) = self.event_tx.try_send(event) {
-            match phase {
-                ShortcutPhase::Start => warn!("Failed to send shortcut start event: {}", err),
-                ShortcutPhase::End | ShortcutPhase::Cancel => unreachable!(),
-            }
-            return;
-        }
-        self.stats.shortcut_events_emitted += 1;
-    }
-
-    fn snapshot(&self) -> InputSnapshot {
-        InputSnapshot {
-            device_count: self.source.device_count(),
-            devices: self.source.device_paths(),
-            shortcuts: self.shortcuts.summaries(),
+    fn publish_snapshot(&self, health: Option<ActivationHealth>) {
+        let source = self.source.snapshot();
+        self.snapshot_tx.send_replace(InputSnapshot {
+            backend: source.backend,
+            health: health.unwrap_or(source.health),
+            shortcuts: source.shortcuts,
             app_busy: self.app_busy,
             stats: self.stats.clone(),
-        }
-    }
-
-    fn log_if_busy(&mut self) {
-        if self.last_busy_log.elapsed() < Duration::from_secs(60) {
-            return;
-        }
-
-        if !self.app_busy && self.stats.loop_busy_ticks > 1_000 {
-            warn!(
-                udev_events_seen = self.stats.udev_events_seen,
-                udev_events_coalesced = self.stats.udev_events_coalesced,
-                device_refreshes = self.stats.device_refreshes,
-                key_events_seen = self.stats.key_events_seen,
-                shortcut_events_emitted = self.stats.shortcut_events_emitted,
-                loop_busy_ticks = self.stats.loop_busy_ticks,
-                "Input manager busy while idle"
-            );
-        }
-
-        self.stats.loop_busy_ticks = 0;
-        self.last_busy_log = Instant::now();
+        });
     }
 }
