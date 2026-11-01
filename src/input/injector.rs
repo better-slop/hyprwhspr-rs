@@ -8,7 +8,7 @@ use std::{future::Future, pin::Pin};
 
 use super::paste_route::{
     class_paste_hint_for_class, normalize_hint_classes, plan_paste_route, PasteRoute,
-    PasteRouteContext,
+    PasteRouteContext, PasteShortcut,
 };
 use crate::config::Config;
 
@@ -50,8 +50,9 @@ impl From<&Config> for DeliveryConfig {
 }
 
 /// Owns native delivery resources, including the clipboard serving lifetime.
-/// Copy and paste replace the regular clipboard with text and retain it while
-/// this process runs. Restoration is unsupported: a text snapshot cannot
+/// Copy and paste replace regular clipboard text; Shift+Insert also replaces
+/// PRIMARY because selection-consuming targets may read it. Text is retained
+/// while this process runs. Restoration is unsupported: a text snapshot cannot
 /// preserve rich formats or establish ownership of a newer selection.
 pub struct TextInjector {
     config: DeliveryConfig,
@@ -76,7 +77,10 @@ impl TextInjector {
     /// Preserve Unicode, whitespace, newline and tab characters unchanged.
     pub async fn deliver(&mut self, text: &str, intent: DeliveryIntent) -> Result<()> {
         if intent == DeliveryIntent::Copy {
-            return self.effects.publish_clipboard(text).await;
+            return self
+                .effects
+                .publish_clipboard(text, ClipboardTargets::Regular)
+                .await;
         }
         if text.is_empty() {
             return Ok(());
@@ -138,8 +142,10 @@ impl TextInjector {
     ) -> Result<()> {
         self.effects.settle_focus().await?;
         self.effects.validate_focus(focus).await?;
-        if matches!(insertion, Insertion::Paste(_)) {
-            self.effects.publish_clipboard(text).await?;
+        if let Insertion::Paste(route) = insertion {
+            self.effects
+                .publish_clipboard(text, ClipboardTargets::for_paste(route))
+                .await?;
             self.effects.validate_focus(focus).await?;
         }
         self.effects.insert(insertion, text).await.map_err(|error| {
@@ -168,6 +174,39 @@ enum Insertion {
     Paste(PasteRoute),
 }
 
+/// Selection policy belongs to delivery, not to callers or native adapters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClipboardTargets {
+    Regular,
+    Both,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClipboardSelection {
+    Regular,
+    Primary,
+}
+
+impl ClipboardTargets {
+    fn for_paste(route: PasteRoute) -> Self {
+        match route {
+            // Kitty's default Shift+Insert action prefers PRIMARY; other apps
+            // consume regular clipboard for this shortcut. Publish both once:
+            // https://sw.kovidgoyal.net/kitty/actions/#paste_from_selection
+            PasteRoute::Hyprland(PasteShortcut::ShiftInsert)
+            | PasteRoute::VirtualKeyboard(PasteShortcut::ShiftInsert) => Self::Both,
+            _ => Self::Regular,
+        }
+    }
+
+    fn selections(self) -> &'static [ClipboardSelection] {
+        match self {
+            Self::Regular => &[ClipboardSelection::Regular],
+            Self::Both => &[ClipboardSelection::Regular, ClipboardSelection::Primary],
+        }
+    }
+}
+
 /// Exercise this boundary through `TextInjector::deliver`. Preparation opens
 /// connections; it must never insert text or alter the clipboard.
 trait DeliveryEffects: Send {
@@ -176,7 +215,12 @@ trait DeliveryEffects: Send {
     fn prepare(&mut self, insertion: Insertion) -> Result<()>;
     fn settle_focus(&mut self) -> EffectFuture<'_, ()>;
     fn validate_focus<'a>(&'a mut self, focus: Option<&'a Focus>) -> EffectFuture<'a, ()>;
-    fn publish_clipboard<'a>(&'a mut self, text: &'a str) -> EffectFuture<'a, ()>;
+    /// Publish once, then confirm every selected clipboard before returning.
+    fn publish_clipboard<'a>(
+        &'a mut self,
+        text: &'a str,
+        targets: ClipboardTargets,
+    ) -> EffectFuture<'a, ()>;
     fn insert<'a>(&'a mut self, insertion: Insertion, text: &'a str) -> EffectFuture<'a, ()>;
     fn cleanup(&mut self, insertion: Insertion) -> Result<()>;
 }

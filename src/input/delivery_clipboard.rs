@@ -2,6 +2,7 @@
 //! acknowledges preparation before its owner thread flushes the selection, so
 //! keyboard dispatch/client acknowledgement must wait for visible UTF-8 text.
 
+use super::super::{ClipboardSelection, ClipboardTargets};
 use anyhow::{bail, Context, Result};
 use std::io::{ErrorKind, Read};
 use std::os::fd::AsRawFd;
@@ -11,7 +12,7 @@ use wl_clipboard_rs::{copy, paste};
 const PUBLISH_DEADLINE: Duration = Duration::from_secs(1);
 const OBSERVATION_INTERVAL: Duration = Duration::from_millis(10);
 
-pub(super) async fn publish(text: &str) -> Result<()> {
+pub(super) async fn publish(text: &str, targets: ClipboardTargets) -> Result<()> {
     let bytes = text.as_bytes().to_vec();
     let deadline = Instant::now() + PUBLISH_DEADLINE;
     // One worker for publication AND all observations. A Tokio timeout cannot
@@ -21,7 +22,10 @@ pub(super) async fn publish(text: &str) -> Result<()> {
     let worker = tokio::task::spawn_blocking(move || {
         ensure_before_deadline(deadline)?;
         let mut options = copy::Options::new();
-        options.clipboard(copy::ClipboardType::Regular);
+        options.clipboard(match targets {
+            ClipboardTargets::Regular => copy::ClipboardType::Regular,
+            ClipboardTargets::Both => copy::ClipboardType::Both,
+        });
         options
             .copy(
                 copy::Source::Bytes(bytes.clone().into_boxed_slice()),
@@ -30,7 +34,8 @@ pub(super) async fn publish(text: &str) -> Result<()> {
             .context("Cannot publish text to Wayland clipboard")?;
         wait_until_visible(
             &bytes,
-            |limit| observe_text(limit, deadline),
+            targets,
+            |selection, limit| observe_text(selection, limit, deadline),
             || {
                 ensure_before_deadline(deadline)?;
                 std::thread::sleep(
@@ -48,11 +53,18 @@ pub(super) async fn publish(text: &str) -> Result<()> {
 
 fn wait_until_visible(
     expected: &[u8],
-    mut observe: impl FnMut(usize) -> Result<Option<Vec<u8>>>,
+    targets: ClipboardTargets,
+    mut observe: impl FnMut(ClipboardSelection, usize) -> Result<Option<Vec<u8>>>,
     mut wait: impl FnMut() -> Result<()>,
 ) -> Result<()> {
     loop {
-        if observe(expected.len().saturating_add(1))?.as_deref() == Some(expected) {
+        let mut all_visible = true;
+        for &selection in targets.selections() {
+            if observe(selection, expected.len().saturating_add(1))?.as_deref() != Some(expected) {
+                all_visible = false;
+            }
+        }
+        if all_visible {
             return Ok(());
         }
         // Only read-only observations repeat. Never republish or retry input.
@@ -67,10 +79,17 @@ fn ensure_before_deadline(deadline: Instant) -> Result<()> {
     Ok(())
 }
 
-fn observe_text(limit: usize, deadline: Instant) -> Result<Option<Vec<u8>>> {
+fn observe_text(
+    selection: ClipboardSelection,
+    limit: usize,
+    deadline: Instant,
+) -> Result<Option<Vec<u8>>> {
     ensure_before_deadline(deadline)?;
     let result = paste::get_contents(
-        paste::ClipboardType::Regular,
+        match selection {
+            ClipboardSelection::Regular => paste::ClipboardType::Regular,
+            ClipboardSelection::Primary => paste::ClipboardType::Primary,
+        },
         paste::Seat::Unspecified,
         paste::MimeType::Specific("text/plain;charset=utf-8"),
     );
@@ -152,7 +171,9 @@ mod tests {
         let mut waits = 0;
         wait_until_visible(
             b"ready",
-            |limit| {
+            ClipboardTargets::Regular,
+            |selection, limit| {
+                assert_eq!(selection, ClipboardSelection::Regular);
                 assert_eq!(limit, 6);
                 Ok(observations.next().unwrap())
             },
@@ -169,7 +190,8 @@ mod tests {
     fn deadline_prevents_acknowledging_unconfirmed_text() {
         let error = wait_until_visible(
             b"expected",
-            |_| Ok(Some(b"old".to_vec())),
+            ClipboardTargets::Regular,
+            |_, _| Ok(Some(b"old".to_vec())),
             || bail!("controlled readiness deadline exceeded"),
         )
         .unwrap_err();
@@ -197,12 +219,67 @@ mod tests {
         let mut observations = [Some(b"x".to_vec()), Some(Vec::new())].into_iter();
         wait_until_visible(
             b"",
-            |limit| {
+            ClipboardTargets::Regular,
+            |_, limit| {
                 assert_eq!(limit, 1);
                 Ok(observations.next().unwrap())
             },
             || Ok(()),
         )
         .unwrap();
+    }
+
+    #[test]
+    fn both_selections_must_match_before_readiness_succeeds() {
+        let round = std::cell::Cell::new(0);
+        let mut observed = Vec::new();
+        wait_until_visible(
+            b"new",
+            ClipboardTargets::Both,
+            |selection, limit| {
+                assert_eq!(limit, 4);
+                observed.push(selection);
+                Ok(Some(
+                    if selection == ClipboardSelection::Primary && round.get() == 0 {
+                        b"old".to_vec()
+                    } else {
+                        b"new".to_vec()
+                    },
+                ))
+            },
+            || {
+                round.set(round.get() + 1);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            observed,
+            [
+                ClipboardSelection::Regular,
+                ClipboardSelection::Primary,
+                ClipboardSelection::Regular,
+                ClipboardSelection::Primary
+            ]
+        );
+    }
+
+    #[test]
+    fn primary_readiness_failure_cannot_acknowledge_fresh_regular_selection() {
+        let error = wait_until_visible(
+            b"new",
+            ClipboardTargets::Both,
+            |selection, _| {
+                Ok(Some(match selection {
+                    ClipboardSelection::Regular => b"new".to_vec(),
+                    ClipboardSelection::Primary => b"old".to_vec(),
+                }))
+            },
+            || bail!("PRIMARY readiness deadline exceeded"),
+        )
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("PRIMARY readiness deadline exceeded"));
     }
 }

@@ -1,7 +1,7 @@
 //! Linux/Wayland effects. No dispatch fallback: selecting a capability happens
 //! before clipboard publication, and a failed insertion is never replayed.
 
-use super::{Capabilities, DeliveryEffects, EffectFuture, Focus, Insertion};
+use super::{Capabilities, ClipboardTargets, DeliveryEffects, EffectFuture, Focus, Insertion};
 use crate::input::hyprland::HyprlandDispatcher;
 use crate::input::paste_route::{PasteRoute, PasteShortcut};
 use anyhow::{bail, Context, Result};
@@ -106,12 +106,16 @@ impl DeliveryEffects for NativeEffects {
         })
     }
 
-    fn publish_clipboard<'a>(&'a mut self, text: &'a str) -> EffectFuture<'a, ()> {
+    fn publish_clipboard<'a>(
+        &'a mut self,
+        text: &'a str,
+        targets: ClipboardTargets,
+    ) -> EffectFuture<'a, ()> {
         Box::pin(async move {
             if !self.wayland {
                 bail!("Clipboard delivery requires Wayland data-control support");
             }
-            clipboard::publish(text).await
+            clipboard::publish(text, targets).await
         })
     }
 

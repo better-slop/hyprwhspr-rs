@@ -8,7 +8,7 @@ enum Event {
     Prepare(Insertion),
     Settle,
     Validate,
-    Copy(String),
+    Copy(ClipboardTargets, String),
     Insert(Insertion, String),
     Cleanup,
 }
@@ -70,8 +70,12 @@ impl DeliveryEffects for ControlledEffects {
             })
         })
     }
-    fn publish_clipboard<'a>(&'a mut self, text: &'a str) -> EffectFuture<'a, ()> {
-        self.record(Event::Copy(text.into()));
+    fn publish_clipboard<'a>(
+        &'a mut self,
+        text: &'a str,
+        targets: ClipboardTargets,
+    ) -> EffectFuture<'a, ()> {
+        self.record(Event::Copy(targets, text.into()));
         let gate = self.copy_gate.take();
         Box::pin(async move {
             if let Some((started, visible)) = gate {
@@ -148,7 +152,10 @@ async fn copy_publishes_once_without_focus_or_keyboard_effects() {
         .unwrap();
     assert_eq!(
         *events.lock().unwrap(),
-        [Event::Copy("history\n\t世界".into())]
+        [Event::Copy(
+            ClipboardTargets::Regular,
+            "history\n\t世界".into()
+        )]
     );
 }
 
@@ -156,7 +163,10 @@ async fn copy_publishes_once_without_focus_or_keyboard_effects() {
 async fn explicit_empty_copy_publishes_empty_text_instead_of_acknowledging_old_contents() {
     let (mut delivery, events) = controlled(DeliveryConfig::default(), None);
     delivery.deliver("", DeliveryIntent::Copy).await.unwrap();
-    assert_eq!(*events.lock().unwrap(), [Event::Copy(String::new())]);
+    assert_eq!(
+        *events.lock().unwrap(),
+        [Event::Copy(ClipboardTargets::Regular, String::new())]
+    );
 }
 
 #[tokio::test]
@@ -174,7 +184,7 @@ async fn paste_prepares_capability_before_touching_clipboard_and_inserts_once() 
             Event::Prepare(insertion),
             Event::Settle,
             Event::Validate,
-            Event::Copy("hello".into()),
+            Event::Copy(ClipboardTargets::Regular, "hello".into()),
             Event::Validate,
             Event::Insert(insertion, "hello".into()),
             Event::Cleanup,
@@ -230,7 +240,7 @@ async fn insertion_failure_is_reported_with_no_retry_or_method_switch() {
         );
         assert_eq!(events.last(), Some(&Event::Cleanup));
         if intent == DeliveryIntent::Type {
-            assert!(!events.iter().any(|event| matches!(event, Event::Copy(_))));
+            assert!(!events.iter().any(|event| matches!(event, Event::Copy(..))));
         }
     }
 }
@@ -355,3 +365,6 @@ async fn copy_and_paste_wait_for_visibility_and_do_not_insert_after_readiness_fa
         );
     }
 }
+
+#[path = "delivery_selection_tests.rs"]
+mod selection;
