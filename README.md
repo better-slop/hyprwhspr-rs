@@ -224,15 +224,17 @@ bind = ALT, SPACE, exec, hyprwhspr-rs record toggle
   "stop_sound_volume": 0.1, // 0.1 - 1.0
   "start_sound_path": null, // Optional custom audio asset overrides
   "stop_sound_path": null, // Optional custom audio asset overrides
-  "auto_copy_clipboard": true, // true: copy and paste; false: type directly without touching the clipboard
-  "shift_paste": false, // Whether to force shift paste
-  "global_paste_shortcut": false, // Enable compositor-level paste; uses Hyprland sendshortcut with Shift+Insert for all pastes
+  // Clipboard delivery needs Wayland data-control; direct typing needs virtual-keyboard support.
+  "auto_copy_clipboard": true, // true: copy/paste; false: type without clipboard (newlines/tabs send Return/Tab)
+  "max_copy_text_bytes": 1048576, // Maximum UTF-8 stdin size for `hyprwhspr-rs copy`; enforced by the daemon too
+  "shift_paste": false, // Ctrl+Shift+V instead of Ctrl+V; applies only when auto_copy_clipboard is true
+  "global_paste_shortcut": false, // Shift+Insert for all pastes; publishes to regular and primary selections
   "paste_hints": {
     "shift": [
       // List of window classes that will always paste with Ctrl+Shift+V
     ],
     "shift_insert": [
-      // List of window classes that will always paste with Shift+Insert
+      // Window classes that use Shift+Insert; publishes to regular and primary selections
     ],
   },
   "audio_device": null, // Force a specific input device index (null uses system default)
@@ -340,10 +342,8 @@ bind = ALT, SPACE, exec, hyprwhspr-rs record toggle
 }
 ```
 
-Set `auto_copy_clipboard` to `false` to type each character directly and preserve the clipboard.
-This requires a Wayland compositor supporting the virtual keyboard protocol (including Hyprland).
-Paste settings (`shift_paste`, `global_paste_shortcut`, and `paste_hints`) apply only when this option is `true`.
-Direct typing sends newline and tab characters as Return and Tab key presses; unavailable virtual keyboards report an error.
+Walker/Elephant history uses `hyprwhspr-rs copy`: UTF-8 stdin goes to the running
+daemon, which keeps clipboard ownership after the command exits.
 
 </details>
 
@@ -452,6 +452,10 @@ All other fields in the `fast_vad` block map directly to the trimmer’s behavio
 recompiling.
 
 </details>
+
+## Inspiration
+
+Inspired by [Hex](https://github.com/anomalyco/hex)'s native typing and clipboard handling.
 
 ## Development
 

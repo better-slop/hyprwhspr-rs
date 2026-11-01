@@ -7,7 +7,7 @@ use crate::audio::{
     capture::RecordingSession, AudioCapture, AudioFeedback, CapturedAudio, FastVad, FastVadOutcome,
 };
 use crate::config::{Config, ConfigManager, TranscriptionProvider};
-use crate::input::TextInjector;
+use crate::input::{DeliveryConfig, TextInjector};
 use crate::status::StatusWriter;
 use crate::text::NormalizeTextService;
 use crate::transcription::{TranscriptionBackend, TranscriptionResult};
@@ -59,13 +59,7 @@ impl HyprwhsprAppTest {
             transcriber.provider().label()
         );
 
-        let text_injector = TextInjector::new(
-            config.shift_paste,
-            config.global_paste_shortcut,
-            config.paste_hints.shift.clone(),
-            config.paste_hints.shift_insert.clone(),
-            config.auto_copy_clipboard,
-        )?;
+        let text_injector = TextInjector::new(DeliveryConfig::from(&config));
         let text_normalizer = NormalizeTextService::new(config.word_overrides.clone());
 
         let status_writer = StatusWriter::new()?;
@@ -121,13 +115,7 @@ impl HyprwhsprAppTest {
             new_config.stop_sound_volume,
         );
 
-        let text_injector = TextInjector::new(
-            new_config.shift_paste,
-            new_config.global_paste_shortcut,
-            new_config.paste_hints.shift.clone(),
-            new_config.paste_hints.shift_insert.clone(),
-            new_config.auto_copy_clipboard,
-        )?;
+        let text_injector = TextInjector::new(DeliveryConfig::from(&new_config));
         let text_normalizer = NormalizeTextService::new(new_config.word_overrides.clone());
 
         let transcriber_changed =
@@ -352,7 +340,12 @@ impl HyprwhsprAppTest {
         let mut injector = text_injector.lock().await;
 
         info!("⌨️  Injecting text into active application...");
-        injector.inject_text(&normalized_text).await?;
+        injector
+            .deliver(
+                &normalized_text,
+                self.current_config.dictation_delivery_intent(),
+            )
+            .await?;
         info!("✅ Text injected successfully!");
 
         Ok(())

@@ -1,3 +1,5 @@
+use crate::control::{validate_copy_text_limit, MAX_COPY_TEXT_LIMIT};
+use crate::input::DeliveryIntent;
 use crate::paths::expand_tilde;
 use crate::transcription::DEFAULT_PROMPT;
 use anyhow::{anyhow, Context, Result};
@@ -19,6 +21,10 @@ pub fn generated_schema_json() -> Result<String> {
     let schema = schemars::schema_for!(Config);
     serde_json::to_string_pretty(&schema).context("Failed to serialize config JSON schema")
 }
+
+#[cfg(test)]
+#[path = "config/reload_tests.rs"]
+mod reload_tests;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct ShortcutsConfig {
@@ -87,6 +93,15 @@ pub struct Config {
     /// the Wayland virtual keyboard protocol without accessing the clipboard.
     #[serde(default = "default_auto_copy_clipboard")]
     pub auto_copy_clipboard: bool,
+
+    /// Maximum UTF-8 byte length accepted by clipboard-only CLI/control requests.
+    /// Reloaded daemon configuration applies to each newly received request.
+    #[serde(
+        default = "default_max_copy_text_bytes",
+        deserialize_with = "deserialize_max_copy_text_bytes"
+    )]
+    #[schemars(range(min = 1, max = MAX_COPY_TEXT_LIMIT))]
+    pub max_copy_text_bytes: usize,
 
     #[serde(default = "default_shift_paste")]
     pub shift_paste: bool,
@@ -161,6 +176,18 @@ fn default_volume() -> f32 {
 
 fn default_auto_copy_clipboard() -> bool {
     true
+}
+
+fn default_max_copy_text_bytes() -> usize {
+    1024 * 1024
+}
+
+fn deserialize_max_copy_text_bytes<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<usize, D::Error> {
+    let limit = usize::deserialize(deserializer)?;
+    validate_copy_text_limit(limit).map_err(serde::de::Error::custom)?;
+    Ok(limit)
 }
 
 fn default_shift_paste() -> bool {
@@ -818,6 +845,7 @@ impl Default for Config {
             start_sound_path: None,
             stop_sound_path: None,
             auto_copy_clipboard: default_auto_copy_clipboard(),
+            max_copy_text_bytes: default_max_copy_text_bytes(),
             shift_paste: default_shift_paste(),
             global_paste_shortcut: false,
             paste_hints: PasteHintsConfig::default(),
@@ -839,6 +867,17 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Preserve the released dictation behavior at one policy boundary:
+    /// auto-copy means copy-and-paste; opting out means clipboard-free typing.
+    /// Explicit history-copy actions request `DeliveryIntent::Copy` separately.
+    pub fn dictation_delivery_intent(&self) -> DeliveryIntent {
+        if self.auto_copy_clipboard {
+            DeliveryIntent::Paste
+        } else {
+            DeliveryIntent::Type
+        }
+    }
+
     pub fn normalize_shortcuts(&mut self) {
         let default_primary = default_primary_shortcut();
         let legacy_primary = Self::sanitize_shortcut(&self.primary_shortcut);
@@ -1002,9 +1041,11 @@ impl ConfigManager {
         }
 
         let inner = Arc::clone(&self.inner);
+        // Capture before returning, so edits made before the task's first poll
+        // still differ from the baseline and reach future control subscribers.
+        let mut last_state = Self::file_state(&inner.config_path);
 
         tokio::spawn(async move {
-            let mut last_state = Self::file_state(&inner.config_path);
             let mut ticker = time::interval(Duration::from_millis(500));
 
             loop {
@@ -1025,14 +1066,15 @@ impl ConfigManager {
                             *guard = new_config.clone();
                             drop(guard);
 
-                            if inner.change_tx.send(new_config.clone()).is_ok() {
-                                tracing::info!("Reloaded config from: {:?}", inner.config_path);
-                                tracing::debug!(
-                                    ?old_config,
-                                    ?new_config,
-                                    "Config watcher applied update"
-                                );
-                            }
+                            // Keep the watch snapshot current even during model
+                            // startup, before app/control subscribers exist.
+                            inner.change_tx.send_replace(new_config.clone());
+                            tracing::info!("Reloaded config from: {:?}", inner.config_path);
+                            tracing::debug!(
+                                ?old_config,
+                                ?new_config,
+                                "Config watcher applied update"
+                            );
                         }
                     }
                     Err(err) => {
@@ -1064,7 +1106,7 @@ impl ConfigManager {
             *guard = config.clone();
         }
 
-        let _ = self.inner.change_tx.send(config);
+        self.inner.change_tx.send_replace(config);
 
         tracing::info!("Saved config to: {:?}", self.inner.config_path);
         Ok(())

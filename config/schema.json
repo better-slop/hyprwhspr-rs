@@ -54,6 +54,14 @@
       "format": "int32",
       "writeOnly": true
     },
+    "max_copy_text_bytes": {
+      "description": "Maximum UTF-8 byte length accepted by clipboard-only CLI/control requests.\nReloaded daemon configuration applies to each newly received request.",
+      "type": "integer",
+      "format": "uint",
+      "default": 1048576,
+      "maximum": 9223372036854775801,
+      "minimum": 1
+    },
     "model": {
       "type": [
         "string",

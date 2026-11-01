@@ -1,8 +1,10 @@
+use crate::config::Config;
 use anyhow::{anyhow, bail, Context, Result};
 use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
-use tokio::sync::{mpsc, oneshot};
+use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::sync::{mpsc, oneshot, watch};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecorderState {
@@ -76,159 +78,81 @@ impl FromStr for RecordCommand {
 pub type ControlReply = std::result::Result<RecorderState, String>;
 
 #[derive(Debug)]
-pub struct ControlRequest {
-    pub command: RecordCommand,
-    pub reply_tx: oneshot::Sender<ControlReply>,
+pub enum ControlRequest {
+    Record {
+        command: RecordCommand,
+        reply_tx: oneshot::Sender<ControlReply>,
+    },
+    /// Clipboard ownership stays in the daemon after the client receives its
+    /// publication acknowledgement and exits. Never retry an uncertain request.
+    CopyText {
+        text: String,
+        reply_tx: oneshot::Sender<std::result::Result<(), String>>,
+    },
+}
+
+const COPY_PREFIX: &[u8] = b"copy\n";
+// Record commands have fixed short verbs. Their framing allowance is separate
+// from copy payload policy, so a one-byte copy limit still permits `status\n`.
+const MAX_RECORD_FRAME_BYTES: usize = 64;
+pub(crate) const MAX_COPY_TEXT_LIMIT: usize = isize::MAX as usize - COPY_PREFIX.len() - 1;
+
+pub(crate) fn validate_copy_text_limit(limit: usize) -> Result<()> {
+    if limit == 0 || limit > MAX_COPY_TEXT_LIMIT {
+        bail!("max_copy_text_bytes must be between 1 and {MAX_COPY_TEXT_LIMIT}");
+    }
+    Ok(())
+}
+
+fn validate_copy_text_size(length: usize, limit: usize) -> Result<()> {
+    validate_copy_text_limit(limit)?;
+    if length > limit {
+        bail!("Copy text exceeds max_copy_text_bytes limit of {limit} bytes");
+    }
+    Ok(())
+}
+
+/// Bound stdin before allocating the entire payload. Client configuration gives
+/// an early resource bound; the daemon independently enforces its active config.
+pub async fn read_copy_text(reader: impl AsyncRead + Unpin, limit: usize) -> Result<String> {
+    validate_copy_text_limit(limit)?;
+    let mut bytes = Vec::new();
+    reader
+        .take((limit + 1) as u64)
+        .read_to_end(&mut bytes)
+        .await
+        .context("Cannot read copy text from stdin")?;
+    validate_copy_text_size(bytes.len(), limit)?;
+    String::from_utf8(bytes).context("Copy stdin must contain valid UTF-8")
+}
+
+fn request_read_limit(limit: usize) -> Result<u64> {
+    validate_copy_text_limit(limit)?;
+    Ok((limit + COPY_PREFIX.len() + 1).max(MAX_RECORD_FRAME_BYTES + 1) as u64)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum WireRequest {
+    Record(RecordCommand),
+    CopyText(String),
+}
+
+fn parse_request(bytes: &[u8], limit: usize) -> Result<WireRequest> {
+    validate_copy_text_limit(limit)?;
+    let text = std::str::from_utf8(bytes).context("Control request must contain valid UTF-8")?;
+    if let Some(text) = text.strip_prefix("copy\n") {
+        validate_copy_text_size(text.len(), limit)?;
+        return Ok(WireRequest::CopyText(text.to_owned()));
+    }
+    if bytes.len() > MAX_RECORD_FRAME_BYTES {
+        bail!("Record control frame exceeds protocol allowance");
+    }
+    Ok(WireRequest::Record(RecordCommand::from_str(text)?))
 }
 
 #[cfg(target_os = "linux")]
-mod platform {
-    use super::*;
-    use std::env;
-    use std::fs;
-    use std::io::ErrorKind;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::{UnixListener, UnixStream};
-    use tokio::task::JoinHandle;
-
-    pub struct ControlServer {
-        path: PathBuf,
-        task: JoinHandle<()>,
-    }
-
-    impl ControlServer {
-        pub fn spawn(tx: mpsc::Sender<ControlRequest>) -> Result<Option<Self>> {
-            let path = control_socket_path()?;
-            prepare_socket_path(&path)?;
-            let listener = UnixListener::bind(&path)
-                .with_context(|| format!("Failed to bind control socket at {}", path.display()))?;
-
-            let task = tokio::spawn(async move {
-                loop {
-                    match listener.accept().await {
-                        Ok((stream, _)) => {
-                            let request_tx = tx.clone();
-                            tokio::spawn(async move {
-                                if let Err(err) = handle_client(stream, request_tx).await {
-                                    tracing::warn!("Control client error: {err:#}");
-                                }
-                            });
-                        }
-                        Err(err) => {
-                            tracing::error!("Control socket accept failed: {err}");
-                            break;
-                        }
-                    }
-                }
-            });
-
-            Ok(Some(Self { path, task }))
-        }
-    }
-
-    impl Drop for ControlServer {
-        fn drop(&mut self) {
-            self.task.abort();
-            if let Err(err) = fs::remove_file(&self.path) {
-                if err.kind() != ErrorKind::NotFound {
-                    tracing::warn!(
-                        "Failed to remove control socket {}: {}",
-                        self.path.display(),
-                        err
-                    );
-                }
-            }
-        }
-    }
-
-    pub async fn send_record_command(command: RecordCommand) -> Result<RecorderState> {
-        let path = control_socket_path()?;
-        let mut stream = UnixStream::connect(&path).await.with_context(|| {
-            format!(
-                "Failed to connect to hyprwhspr-rs control socket at {}. Start hyprwhspr-rs first.",
-                path.display()
-            )
-        })?;
-
-        stream
-            .write_all(command.as_str().as_bytes())
-            .await
-            .context("Failed to send control command")?;
-        stream
-            .shutdown()
-            .await
-            .context("Failed to finish control command write")?;
-
-        let mut response = Vec::new();
-        stream
-            .read_to_end(&mut response)
-            .await
-            .context("Failed to read control response")?;
-
-        parse_response(&String::from_utf8_lossy(&response))
-    }
-
-    async fn handle_client(mut stream: UnixStream, tx: mpsc::Sender<ControlRequest>) -> Result<()> {
-        let mut request = Vec::new();
-        stream
-            .read_to_end(&mut request)
-            .await
-            .context("Failed to read control request")?;
-
-        let command = RecordCommand::from_str(String::from_utf8_lossy(&request).trim())?;
-        let (reply_tx, reply_rx) = oneshot::channel();
-        tx.send(ControlRequest { command, reply_tx })
-            .await
-            .context("Control channel closed")?;
-
-        let response = match reply_rx.await {
-            Ok(Ok(state)) => format!("ok {state}\n"),
-            Ok(Err(message)) => format!("err {message}\n"),
-            Err(_) => "err control handler dropped response\n".to_string(),
-        };
-
-        stream
-            .write_all(response.as_bytes())
-            .await
-            .context("Failed to write control response")?;
-        stream
-            .shutdown()
-            .await
-            .context("Failed to finish control response write")?;
-
-        Ok(())
-    }
-
-    fn control_socket_path() -> Result<PathBuf> {
-        let base = env::var_os("XDG_RUNTIME_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| env::temp_dir());
-        let dir = base.join("hyprwhspr-rs");
-        fs::create_dir_all(&dir)
-            .with_context(|| format!("Failed to create control directory {}", dir.display()))?;
-        Ok(dir.join("control.sock"))
-    }
-
-    fn prepare_socket_path(path: &PathBuf) -> Result<()> {
-        if !path.exists() {
-            return Ok(());
-        }
-
-        match std::os::unix::net::UnixStream::connect(path) {
-            Ok(_) => bail!(
-                "Another hyprwhspr-rs instance is already serving control commands at {}",
-                path.display()
-            ),
-            Err(_) => {
-                fs::remove_file(path).with_context(|| {
-                    format!("Failed to remove stale control socket {}", path.display())
-                })?;
-            }
-        }
-
-        Ok(())
-    }
-}
+#[path = "control/linux.rs"]
+mod platform;
 
 #[cfg(not(target_os = "linux"))]
 mod platform {
@@ -237,7 +161,10 @@ mod platform {
     pub struct ControlServer;
 
     impl ControlServer {
-        pub fn spawn(_tx: mpsc::Sender<ControlRequest>) -> Result<Option<Self>> {
+        pub fn spawn(
+            _tx: mpsc::Sender<ControlRequest>,
+            _config_rx: watch::Receiver<Config>,
+        ) -> Result<Option<Self>> {
             Ok(None)
         }
     }
@@ -245,9 +172,23 @@ mod platform {
     pub async fn send_record_command(_command: RecordCommand) -> Result<RecorderState> {
         bail!("`hyprwhspr-rs record` is currently only supported on Linux")
     }
+
+    pub async fn send_copy_text(_text: &str, _max_copy_text_bytes: usize) -> Result<()> {
+        bail!("`hyprwhspr-rs copy` is only supported on Linux")
+    }
 }
 
-pub use platform::{send_record_command, ControlServer};
+pub use platform::{send_copy_text, send_record_command, ControlServer};
+
+fn parse_copy_response(raw: &str) -> Result<()> {
+    if raw.trim() == "ok" {
+        return Ok(());
+    }
+    if let Some(message) = raw.trim().strip_prefix("err ") {
+        bail!(message.to_owned());
+    }
+    bail!("Copy acknowledgement missing or malformed; clipboard publication may have happened; do not retry");
+}
 
 fn parse_response(raw: &str) -> Result<RecorderState> {
     let body = raw.trim();
@@ -300,5 +241,75 @@ mod tests {
     fn rejects_unknown_response() {
         assert!(parse_response("wat").is_err());
         assert!(parse_response("err nope").is_err());
+    }
+
+    #[test]
+    fn copy_frame_preserves_empty_and_multiline_payloads() {
+        assert_eq!(
+            parse_request(b"copy\n", 32).unwrap(),
+            WireRequest::CopyText(String::new())
+        );
+        assert_eq!(
+            parse_request(b"copy\n\n\tend\n", 32).unwrap(),
+            WireRequest::CopyText("\n\tend\n".into())
+        );
+        assert_eq!(
+            parse_request(b"status\n", 1).unwrap(),
+            WireRequest::Record(RecordCommand::Status)
+        );
+        assert!(parse_request(b"", 32).is_err());
+        assert!(parse_request(b"copy\n\xff", 32).is_err());
+    }
+
+    #[test]
+    fn copy_frame_enforces_byte_bound() {
+        let mut bytes = COPY_PREFIX.to_vec();
+        bytes.resize(4 + COPY_PREFIX.len(), b'x');
+        assert!(parse_request(&bytes, 4).is_ok());
+        bytes.push(b'x');
+        assert!(parse_request(&bytes, 4)
+            .unwrap_err()
+            .to_string()
+            .contains("max_copy_text_bytes limit of 4 bytes"));
+    }
+
+    #[test]
+    fn copy_limit_counts_utf8_bytes_and_leaves_record_commands_independent() {
+        let frame = "copy\n🙂".as_bytes();
+        assert!(parse_request(frame, 4).is_ok());
+        assert!(parse_request(frame, 3).is_err());
+        for command in [b"start".as_slice(), b"stop\n", b"toggle", b"status\r\n"] {
+            assert!(matches!(
+                parse_request(command, 1).unwrap(),
+                WireRequest::Record(_)
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn stdin_respects_configured_limit_and_preserves_literal_utf8() {
+        let text = "🙂\n\t$`";
+        assert_eq!(
+            read_copy_text(text.as_bytes(), text.len()).await.unwrap(),
+            text
+        );
+        assert!(read_copy_text(text.as_bytes(), text.len() - 1)
+            .await
+            .is_err());
+        assert_eq!(read_copy_text(b"".as_slice(), 1).await.unwrap(), "");
+        assert!(read_copy_text(b"\xff".as_slice(), 1).await.is_err());
+        assert!(read_copy_text(b"x".as_slice(), 0).await.is_err());
+        assert!(read_copy_text(b"x".as_slice(), usize::MAX).await.is_err());
+    }
+
+    #[test]
+    fn copy_requires_publication_acknowledgement() {
+        assert!(parse_copy_response("ok\n").is_ok());
+        assert!(parse_copy_response("err clipboard unavailable\n").is_err());
+        assert!(parse_copy_response("")
+            .unwrap_err()
+            .to_string()
+            .contains("do not retry"));
+        assert!(parse_copy_response("ok inactive\n").is_err());
     }
 }

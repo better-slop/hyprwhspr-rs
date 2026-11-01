@@ -31,6 +31,13 @@ async fn main() -> Result<()> {
                 println!("{state}");
                 return Ok(());
             }
+            Command::Copy => {
+                use hyprwhspr_rs::control::{read_copy_text, send_copy_text};
+                // Loading config does not initialize audio, models, or input.
+                let limit = ConfigManager::load()?.get().max_copy_text_bytes;
+                let text = read_copy_text(tokio::io::stdin(), limit).await?;
+                return send_copy_text(&text, limit).await;
+            }
         }
     }
 

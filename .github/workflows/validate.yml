@@ -1,0 +1,76 @@
+name: validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    name: linux-quality-gate
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@1.93.0
+        with:
+          components: clippy, rustfmt
+
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev libxkbcommon-dev libudev-dev
+
+      - uses: Swatinem/rust-cache@v2
+
+      # The repository has older formatting outside this stack. Check every
+      # changed Rust file without recursively checking untouched child modules.
+      - name: Check changed Rust formatting
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          import subprocess
+
+          changed = subprocess.check_output(
+              ["git", "diff", "--name-only", "--diff-filter=ACMR", "-z",
+               os.environ["BASE_SHA"], os.environ["HEAD_SHA"], "--", "*.rs"]
+          ).decode().split("\0")
+          files = [name for name in changed if name and Path(name).is_file()]
+          if files:
+              subprocess.run(
+                  ["rustfmt", "--edition", "2021", "--check", "--config",
+                   "skip_children=true", *files], check=True
+              )
+          PY
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets
+
+      - name: Documentation
+        run: cargo doc --locked --no-deps
+
+      - name: Check without default features
+        run: cargo check --locked --no-default-features
+
+      - name: Release build
+        run: cargo build --locked --release

@@ -21,6 +21,8 @@ pub enum Command {
     Install(InstallArgs),
     /// Control the running recorder daemon
     Record(RecordArgs),
+    /// Copy UTF-8 stdin through the running daemon (bounded by max_copy_text_bytes)
+    Copy,
 }
 
 #[derive(clap::Args)]

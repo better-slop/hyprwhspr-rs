@@ -59,4 +59,6 @@ end
 
 -- Copy selected entry to clipboard.
 -- Elephant pipes `Value` to stdin when no %VALUE%.
-Action = "wl-copy"
+-- The daemon owns clipboard serving after this command acknowledges and exits.
+-- Text stays on stdin, so history contents never become shell syntax.
+Action = "hyprwhspr-rs copy"
