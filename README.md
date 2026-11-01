@@ -3,7 +3,7 @@
   <h3>hyprwhspr-rs</h3>
   <p>Rust implementation of <a href="https://github.com/goodroot/hyprwhspr">hyprwhspr</a> | Blazing fast, native speech-to-text voice dictation for Hyprland and Omarchy | Waybar, Walker, and Elephant integrations (optional)</p>
   <br />
-  <pre><code>cargo install hyprwhspr-rs</code></pre>
+  <pre><code>cargo install hyprwhspr-rs --locked</code></pre>
 </div>
 
 <p align="center">
@@ -96,13 +96,13 @@ bind = ALT, SPACE, exec, hyprwhspr-rs record toggle
 1. Install the latest release from [crates.io](https://crates.io/crates/hyprwhspr-rs)
 
    ```bash
-   cargo install hyprwhspr-rs
+   cargo install hyprwhspr-rs --locked
    ```
 
    Omit `parakeet` backend:
 
    ```bash
-   cargo install hyprwhspr-rs --no-default-features
+   cargo install hyprwhspr-rs --locked --no-default-features
    ```
 
 2. Install systemd service and Waybar module (optionally, with a WIP elephant/walker menu using `--with-elephant` flag)
